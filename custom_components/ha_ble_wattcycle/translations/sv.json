@@ -44,25 +44,62 @@
   },
   "entity": {
     "sensor": {
-      "voltage": { "name": "Spänning" },
-      "current": { "name": "Ström" },
-      "power": { "name": "Effekt" },
-      "soc": { "name": "Laddningsnivå" },
-      "soh": { "name": "Batterihälsa" },
-      "remaining_capacity": { "name": "Kvarvarande kapacitet" },
-      "total_capacity": { "name": "Total kapacitet" },
-      "design_capacity": { "name": "Designkapacitet" },
-      "cycles": { "name": "Laddningscykler" },
-      "mos_temperature": { "name": "MOSFET-temperatur" },
-      "pcb_temperature": { "name": "Kretskortstemperatur" },
-      "cell_voltage_delta": { "name": "Cellspänningsdifferens" },
-      "min_cell_voltage": { "name": "Lägsta cellspänning" },
-      "max_cell_voltage": { "name": "Högsta cellspänning" },
-      "cell_voltage": { "name": "Cell {number} spänning" }
+      "voltage": {
+        "name": "Spänning"
+      },
+      "current": {
+        "name": "Ström"
+      },
+      "power": {
+        "name": "Effekt"
+      },
+      "soc": {
+        "name": "Laddningsnivå"
+      },
+      "soh": {
+        "name": "Batterihälsa"
+      },
+      "remaining_capacity": {
+        "name": "Kvarvarande kapacitet"
+      },
+      "total_capacity": {
+        "name": "Total kapacitet"
+      },
+      "design_capacity": {
+        "name": "Designkapacitet"
+      },
+      "cycles": {
+        "name": "Laddningscykler"
+      },
+      "mos_temperature": {
+        "name": "MOSFET-temperatur"
+      },
+      "pcb_temperature": {
+        "name": "Kretskortstemperatur"
+      },
+      "cell_voltage_delta": {
+        "name": "Cellspänningsdifferens"
+      },
+      "min_cell_voltage": {
+        "name": "Lägsta cellspänning"
+      },
+      "max_cell_voltage": {
+        "name": "Högsta cellspänning"
+      },
+      "cell_voltage": {
+        "name": "Cell {number} spänning"
+      },
+      "ntc_temperature": {
+        "name": "Temperatur {number}"
+      }
     },
     "binary_sensor": {
-      "charging": { "name": "Laddar" },
-      "discharging": { "name": "Urladdar" }
+      "charging": {
+        "name": "Laddar"
+      },
+      "discharging": {
+        "name": "Urladdar"
+      }
     }
   },
   "services": {

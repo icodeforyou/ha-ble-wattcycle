@@ -1,0 +1,172 @@
+# WattCycle-batterivy (sections-layout, endast HA-kärnkort — inga HACS-frontendkort krävs).
+# Klistra in som ny vy: Dashboard → ✏️ Redigera → + (ny vy) → ⋮ → "Redigera i YAML".
+# Entitets-id:na utgår från enheten WTaHdB12605110139 med svensk språkinställning.
+# Temperatur 1–4 kräver integration v0.1.7+.
+type: sections
+max_columns: 3
+title: Batteri
+path: wattcycle-batteri
+icon: mdi:battery-heart-variant
+sections:
+  - type: grid
+    cards:
+      - type: heading
+        heading: WattCycle 314 Ah
+        heading_style: title
+        icon: mdi:battery-high
+      - type: gauge
+        entity: sensor.wtahdb12605110139_laddningsniva
+        name: Laddningsnivå
+        min: 0
+        max: 100
+        severity:
+          green: 40
+          yellow: 20
+          red: 0
+        grid_options:
+          columns: 12
+          rows: 4
+      - type: tile
+        entity: binary_sensor.wtahdb12605110139_laddar
+        name: Laddar
+        icon: mdi:battery-charging
+        color: green
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: binary_sensor.wtahdb12605110139_urladdar
+        name: Urladdar
+        icon: mdi:battery-arrow-down
+        color: amber
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: sensor.wtahdb12605110139_effekt
+        name: Effekt
+        icon: mdi:flash
+        color: deep-orange
+        grid_options:
+          columns: 4
+      - type: tile
+        entity: sensor.wtahdb12605110139_strom
+        name: Ström
+        icon: mdi:current-dc
+        color: blue
+        grid_options:
+          columns: 4
+      - type: tile
+        entity: sensor.wtahdb12605110139_spanning
+        name: Spänning
+        icon: mdi:sine-wave
+        color: indigo
+        grid_options:
+          columns: 4
+      - type: tile
+        entity: sensor.wtahdb12605110139_kvarvarande_kapacitet
+        name: Kvar i batteriet
+        icon: mdi:battery-50
+        color: teal
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: sensor.wtahdb12605110139_laddningscykler
+        name: Cykler
+        icon: mdi:recycle-variant
+        color: grey
+        grid_options:
+          columns: 6
+
+  - type: grid
+    cards:
+      - type: heading
+        heading: Celler
+        heading_style: subtitle
+        icon: mdi:battery-unknown
+      - type: tile
+        entity: sensor.wtahdb12605110139_cell_1_spanning
+        name: Cell 1
+        icon: mdi:numeric-1-box-outline
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: sensor.wtahdb12605110139_cell_2_spanning
+        name: Cell 2
+        icon: mdi:numeric-2-box-outline
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: sensor.wtahdb12605110139_cell_3_spanning
+        name: Cell 3
+        icon: mdi:numeric-3-box-outline
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: sensor.wtahdb12605110139_cell_4_spanning
+        name: Cell 4
+        icon: mdi:numeric-4-box-outline
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: sensor.wtahdb12605110139_cellspanningsdifferens
+        name: Differens (balans)
+        icon: mdi:scale-balance
+        color: purple
+        grid_options:
+          columns: 12
+      - type: heading
+        heading: Temperatur
+        heading_style: subtitle
+        icon: mdi:thermometer
+      - type: tile
+        entity: sensor.wtahdb12605110139_temperatur_1
+        name: Givare 1
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: sensor.wtahdb12605110139_temperatur_2
+        name: Givare 2
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: sensor.wtahdb12605110139_temperatur_3
+        name: Givare 3
+        grid_options:
+          columns: 6
+      - type: tile
+        entity: sensor.wtahdb12605110139_temperatur_4
+        name: Givare 4
+        grid_options:
+          columns: 6
+
+  - type: grid
+    cards:
+      - type: heading
+        heading: Historik
+        heading_style: subtitle
+        icon: mdi:chart-line
+      - type: history-graph
+        title: Laddningsnivå (24 h)
+        hours_to_show: 24
+        entities:
+          - entity: sensor.wtahdb12605110139_laddningsniva
+            name: SoC
+      - type: history-graph
+        title: Effekt och ström (12 h)
+        hours_to_show: 12
+        entities:
+          - entity: sensor.wtahdb12605110139_effekt
+            name: Effekt
+          - entity: sensor.wtahdb12605110139_strom
+            name: Ström
+      - type: history-graph
+        title: Cellspänningar (12 h)
+        hours_to_show: 12
+        entities:
+          - entity: sensor.wtahdb12605110139_cell_1_spanning
+            name: Cell 1
+          - entity: sensor.wtahdb12605110139_cell_2_spanning
+            name: Cell 2
+          - entity: sensor.wtahdb12605110139_cell_3_spanning
+            name: Cell 3
+          - entity: sensor.wtahdb12605110139_cell_4_spanning
+            name: Cell 4

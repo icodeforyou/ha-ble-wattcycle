@@ -179,10 +179,14 @@ async def async_setup_entry(
         for desc in SENSORS
         if desc.exists_fn(state)
     ]
-    # One sensor per detected cell.
+    # One sensor per detected cell and per temperature probe.
     cell_count = len(state.cell_voltages)
     entities.extend(
         WattCycleCellSensor(coordinator, index) for index in range(cell_count)
+    )
+    entities.extend(
+        WattCycleTempSensor(coordinator, index)
+        for index in range(len(state.cell_temperatures))
     )
     async_add_entities(entities)
 
@@ -221,3 +225,23 @@ class WattCycleCellSensor(WattCycleEntity, SensorEntity):
     def native_value(self) -> float | None:
         cells = self.coordinator.data.cell_voltages
         return cells[self._index] if self._index < len(cells) else None
+
+
+class WattCycleTempSensor(WattCycleEntity, SensorEntity):
+    """One NTC temperature probe."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator: WattCycleCoordinator, index: int) -> None:
+        super().__init__(coordinator, f"temperature_{index + 1}")
+        self._index = index
+        self._attr_translation_key = "ntc_temperature"
+        self._attr_translation_placeholders = {"number": str(index + 1)}
+
+    @property
+    def native_value(self) -> float | None:
+        temps = self.coordinator.data.cell_temperatures
+        return temps[self._index] if self._index < len(temps) else None

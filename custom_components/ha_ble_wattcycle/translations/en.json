@@ -44,25 +44,62 @@
   },
   "entity": {
     "sensor": {
-      "voltage": { "name": "Voltage" },
-      "current": { "name": "Current" },
-      "power": { "name": "Power" },
-      "soc": { "name": "State of charge" },
-      "soh": { "name": "State of health" },
-      "remaining_capacity": { "name": "Remaining capacity" },
-      "total_capacity": { "name": "Total capacity" },
-      "design_capacity": { "name": "Design capacity" },
-      "cycles": { "name": "Charge cycles" },
-      "mos_temperature": { "name": "MOSFET temperature" },
-      "pcb_temperature": { "name": "PCB temperature" },
-      "cell_voltage_delta": { "name": "Cell voltage delta" },
-      "min_cell_voltage": { "name": "Min cell voltage" },
-      "max_cell_voltage": { "name": "Max cell voltage" },
-      "cell_voltage": { "name": "Cell {number} voltage" }
+      "voltage": {
+        "name": "Voltage"
+      },
+      "current": {
+        "name": "Current"
+      },
+      "power": {
+        "name": "Power"
+      },
+      "soc": {
+        "name": "State of charge"
+      },
+      "soh": {
+        "name": "State of health"
+      },
+      "remaining_capacity": {
+        "name": "Remaining capacity"
+      },
+      "total_capacity": {
+        "name": "Total capacity"
+      },
+      "design_capacity": {
+        "name": "Design capacity"
+      },
+      "cycles": {
+        "name": "Charge cycles"
+      },
+      "mos_temperature": {
+        "name": "MOSFET temperature"
+      },
+      "pcb_temperature": {
+        "name": "PCB temperature"
+      },
+      "cell_voltage_delta": {
+        "name": "Cell voltage delta"
+      },
+      "min_cell_voltage": {
+        "name": "Min cell voltage"
+      },
+      "max_cell_voltage": {
+        "name": "Max cell voltage"
+      },
+      "cell_voltage": {
+        "name": "Cell {number} voltage"
+      },
+      "ntc_temperature": {
+        "name": "Temperature {number}"
+      }
     },
     "binary_sensor": {
-      "charging": { "name": "Charging" },
-      "discharging": { "name": "Discharging" }
+      "charging": {
+        "name": "Charging"
+      },
+      "discharging": {
+        "name": "Discharging"
+      }
     }
   },
   "services": {
