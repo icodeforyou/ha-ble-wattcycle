@@ -1,7 +1,7 @@
 {
   "domain": "ha_ble_wattcycle",
   "name": "WattCycle BLE Battery",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "codeowners": [
     "@icodeforyou"
   ],
@@ -21,9 +21,6 @@
     },
     {
       "service_uuid": "0000ff00-0000-1000-8000-00805f9b34fb"
-    },
-    {
-      "local_name": "WT*"
     },
     {
       "local_name": "XDZN*"
