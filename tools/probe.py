@@ -129,6 +129,12 @@ def jbd_build_read_frame(cmd: int) -> bytes:
     return bytes([0xDD, 0xA5, cmd, 0x00]) + struct.pack(">H", chk) + bytes([0x77])
 
 
+def bmc_build_frame(cmd: int, data: bytes = b"") -> bytes:
+    # AA <cmd> <len> <data> <chk u16 LE = sum(cmd+len+data)>. Nya packs (självvärmande).
+    body = bytes([cmd & 0xFF, len(data)]) + data
+    return bytes([0xAA]) + body + struct.pack("<H", sum(body) & 0xFFFF)
+
+
 # ---------------------------------------------------------------------------
 # Avkodning
 # ---------------------------------------------------------------------------
@@ -359,7 +365,13 @@ class Probe:
 
             while True:
                 if self.profile == "watt":
-                    frames = watt_analog_read_frames()
+                    # WATT-varianter + korsprotokoll-prober (JBD/BMC) — alla säkra läsningar.
+                    frames = watt_analog_read_frames() + [
+                        ("jbd basic", jbd_build_read_frame(0x03)),
+                        ("bmc handshake", bmc_build_frame(0x00)),
+                        ("bmc battery info", bmc_build_frame(0x21)),
+                        ("bmc cell voltage", bmc_build_frame(0x22)),
+                    ]
                 elif self.profile == "jbd":
                     frames = [("jbd basic", jbd_build_read_frame(0x03)),
                               ("jbd cells", jbd_build_read_frame(0x04))]

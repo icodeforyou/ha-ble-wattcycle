@@ -369,6 +369,84 @@ def jbd_parse_cell_voltages(payload: bytes) -> list[float]:
 
 
 # ---------------------------------------------------------------------------
+# BMC protocol (§ PROTOCOL.md) — present in the app but not yet wired up there;
+# likely used by the newest packs (e.g. DISCOVER self-heating: it is the only
+# protocol with a heating-control command). Little-endian throughout.
+# Frame: AA <cmd> <len> <data...> <chk u16 LE>, chk = sum(cmd + len + data).
+# ---------------------------------------------------------------------------
+BMC_HEADER = 0xAA
+BMC_MIN_FRAME_SIZE = 5
+BMC_CMD_HANDSHAKE = 0x00
+BMC_CMD_MANUFACTURER_NAME = 0x10
+BMC_CMD_PACK_NAME = 0x11
+BMC_CMD_RUNNING_STATUS = 0x20
+BMC_CMD_BATTERY_INFO = 0x21
+BMC_CMD_CELL_VOLTAGE = 0x22
+BMC_CMD_CURRENT = 0x23
+
+
+def bmc_build_frame(command: int, data: bytes = b"") -> bytes:
+    """Build a BMC frame: AA cmd len data chk(u16 LE, plain byte sum)."""
+    body = bytes([command & 0xFF, len(data)]) + data
+    checksum = sum(body) & 0xFFFF
+    return bytes([BMC_HEADER]) + body + struct.pack("<H", checksum)
+
+
+def bmc_expected_length(first_packet: bytes) -> int | None:
+    """Total BMC frame length from the first notify packet."""
+    if len(first_packet) >= 3 and first_packet[0] == BMC_HEADER:
+        return first_packet[2] + BMC_MIN_FRAME_SIZE
+    return None
+
+
+def bmc_parse_frame(data: bytes) -> tuple[int, bytes] | None:
+    """Parse a BMC frame; returns (command, payload) or None if malformed."""
+    if len(data) < BMC_MIN_FRAME_SIZE or data[0] != BMC_HEADER:
+        return None
+    length = data[2]
+    if len(data) < length + BMC_MIN_FRAME_SIZE:
+        return None
+    payload = data[3 : 3 + length]
+    chk_wire = struct.unpack("<H", data[3 + length : 5 + length])[0]
+    chk_calc = sum(data[1 : 3 + length]) & 0xFFFF
+    if chk_wire != chk_calc:
+        return None
+    return data[1], payload
+
+
+def bmc_decode_battery_info(payload: bytes) -> BatteryState:
+    """Decode a BMC battery-info (0x21) payload. Little-endian.
+
+    Capacity units and single-byte temperature encoding are (unverified).
+    """
+    state = BatteryState()
+    (voltage_raw, current_raw) = struct.unpack_from("<ii", payload, 0)
+    state.voltage = round(voltage_raw / 1000.0, 2)
+    state.current = round(current_raw / 1000.0, 2)
+    state.soc = payload[8]
+    state.soh = payload[9]
+    remaining, full = struct.unpack_from("<ii", payload, 10)
+    state.remaining_capacity = round(remaining / 1000.0, 1)  # assume mAh (unverified)
+    state.total_capacity = round(full / 1000.0, 1)
+    state.cycles = struct.unpack_from("<H", payload, 18)[0]
+    if len(payload) >= 26:
+        t1, t2, t3, t4, mos, ambient = payload[20:26]
+        state.cell_temperatures = [float(t1), float(t2), float(t3), float(t4)]
+        state.mos_temperature = float(mos)
+        state.pcb_temperature = float(ambient)  # ambient, reused slot
+    return state
+
+
+def bmc_decode_cell_voltages(payload: bytes) -> list[float]:
+    """Decode a BMC cell-voltage (0x22) payload: 24 u16 LE slots in mV; zeros unused."""
+    count = min(len(payload) // 2, 24)
+    cells = [
+        struct.unpack_from("<H", payload, i * 2)[0] / 1000.0 for i in range(count)
+    ]
+    return [round(v, 3) for v in cells if v > 0.0]
+
+
+# ---------------------------------------------------------------------------
 # Device-type detection from advertisement data
 # ---------------------------------------------------------------------------
 def detect_device_type(

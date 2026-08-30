@@ -19,9 +19,11 @@ DEFAULT_QUIET_LOGGING: Final = False
 
 # Connection tuning
 CONNECT_TIMEOUT: Final = 20.0
+PAIR_TIMEOUT: Final = 10.0
 COMMAND_TIMEOUT: Final = 8.0
 PROBE_TIMEOUT: Final = 4.0  # per request variant while probing the frame format
-MAX_CONNECT_ATTEMPTS: Final = 4
+MAX_CONNECT_ATTEMPTS: Final = 2  # per poll; the coordinator retries next cycle anyway
+POLL_TIMEOUT: Final = 55.0  # hard cap per update so first refresh can't stall HA startup
 
 # Services
 SERVICE_SEND_RAW: Final = "send_raw"

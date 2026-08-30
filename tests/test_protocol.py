@@ -120,6 +120,38 @@ def test_jbd_cell_voltages():
     assert p.jbd_parse_cell_voltages(payload) == [3.3, 3.31, 3.295, 3.305]
 
 
+def test_bmc_frame_roundtrip():
+    handshake = p.bmc_build_frame(p.BMC_CMD_HANDSHAKE)
+    assert handshake == bytes([0xAA, 0x00, 0x00, 0x00, 0x00])
+
+    payload = (
+        struct.pack("<ii", 13234, -5200)          # 13.23 V, -5.2 A
+        + bytes([87, 99])                          # soc, soh
+        + struct.pack("<ii", 150000, 314000)       # remaining, full (mAh)
+        + struct.pack("<H", 42)                    # cycles
+        + bytes([25, 26, 24, 23, 30, 22])          # t1-t4, mos, ambient
+    )
+    frame = p.bmc_build_frame(p.BMC_CMD_BATTERY_INFO, payload)
+    cmd, parsed_payload = p.bmc_parse_frame(frame)
+    assert cmd == p.BMC_CMD_BATTERY_INFO
+    state = p.bmc_decode_battery_info(parsed_payload)
+    assert state.voltage == 13.23
+    assert state.current == -5.2
+    assert state.soc == 87 and state.soh == 99
+    assert state.cycles == 42
+    assert state.mos_temperature == 30.0
+
+    # corrupted checksum must be rejected
+    bad = bytearray(frame)
+    bad[-1] ^= 0xFF
+    assert p.bmc_parse_frame(bytes(bad)) is None
+
+
+def test_bmc_cell_voltages_strip_zero_slots():
+    payload = struct.pack("<24H", 3300, 3310, 3295, 3305, *([0] * 20))
+    assert p.bmc_decode_cell_voltages(payload) == [3.3, 3.31, 3.295, 3.305]
+
+
 def test_detect_device_type():
     assert p.detect_device_type([], [p.MANUFACTURER_JBD], None) is p.DeviceType.JBD
     assert p.detect_device_type([p.uuid128("fff0")], [], None) is p.DeviceType.WATT

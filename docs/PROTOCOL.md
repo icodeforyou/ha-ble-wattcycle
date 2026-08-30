@@ -295,7 +295,37 @@ Felkoder JBD: `0x80` cmd finns ej, `0x81` ogiltig operation, `0x82` checksum-fel
 6. Poll: skicka läsram på writeUUID (`fff2`), ta emot svar via notify, avkoda.
    Realtidspollern (`resumeRealtimeDataPoller`) läser `DP 140` upprepat.
 
-## 9. Känd enhet — valideringsmål (WattCycle DISCOVER 12V 314Ah, självvärmning)
+## 9. BMC-protokollet (nyare packs — trolig för DISCOVER-serien)
+
+`BmcBleProtocolHandler` finns i appen men är **inte inkopplad** i denna APK-version
+(`createProtocolRepository` instansierar den aldrig) — halvintegrerad/kommande kod. Det är det
+enda protokollet med **värmestyrning** (`CMD_HEATING_CONTROL = 0x52`), vilket pekar mot de nya
+självvärmande packen. Fältenheten EE:C2:37:00:64:8C (WTaHdB1..., service fff0, ingen fffa)
+svarade inte på någon WATT-variant — BMC/JBD probas därför också över samma karaktäristik.
+
+Allt **little-endian**. Ram: `AA <cmd> <len> <data...> <chk u16 LE>`, chk = ren byte-summa av
+`cmd+len+data`. Min ramlängd 5; total längd = len + 5. Handshake (0x00) förväntas före data.
+
+Kommandon: `00` handshake, `10` tillverkarnamn, `11` packnamn, `20` running status,
+`21` batteriinfo, `22` cellspänningar, `23` ström, `50/51` ladd/urladd-FET (skriv), `52` värme
+(skriv), `53` clear status, `58` batteriparametrar, `5B/5C/5D` skydds-skrivningar, `66/67/68`
+strömkalibrering, `F5` version.
+
+Batteriinfo (0x21), LE: packVoltage i32/1000 → V; current i32/1000 → A (signerad);
+soc u8 %; soh u8 %; remainingCapacity i32; fullCapacity i32 (enhet trolig mAh, **overifierat**);
+cycleCount u16; därefter 6×u8: temp1–4, mosTemp, ambientTemp (**enkodning overifierad**).
+Cellspänningar (0x22): 24 × u16 LE, mV; oanvända slots = 0.
+
+### Fält-advertisement (verklig enhet, 2026-08-30)
+```
+raw: 0302f0ff | 1209 57...39 ("WTaHdB12605110139") | 0fff eec23700648c 1012 33 11 03 00 0d 00
+mfr-payload: MAC(6) | 0x1012 | 0x33 | 0x11 | 0x03 | soc=0x00 | volt=0x0d(13) | curr=0x00
+```
+Enligt appens AdvData-layout: deviceType=3 (matchar INTE appens enum 16/17/18/48/56/64/80 —
+UNKNOWN), soc=0 (misstänkt; layouten kan avvika för denna adv-revision). Namnet `WTaHdB1...`
+ligger mycket nära JBD-DG04SA02-listans `WTeHdBD...` → modulfamiljen är besläktad.
+
+## 10. Känd enhet — valideringsmål (WattCycle DISCOVER 12V 314Ah, självvärmning)
 
 Från officiella datablad/manualer i `docs/` (tillagda av ägaren):
 - 12.8 V nominellt → **4 celler** LiFePO4 (`cell_count` ska bli 4; cellspänningar ~3.2–3.65 V).

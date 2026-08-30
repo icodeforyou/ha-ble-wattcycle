@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import struct
 from datetime import timedelta
 
 from bleak.exc import BleakError
@@ -24,9 +25,15 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_CONNECT_ATTEMPTS,
+    PAIR_TIMEOUT,
+    POLL_TIMEOUT,
     PROBE_TIMEOUT,
 )
 from .protocol import (
+    BMC_CMD_BATTERY_INFO,
+    BMC_CMD_CELL_VOLTAGE,
+    BMC_CMD_HANDSHAKE,
+    BMC_HEADER,
     HILINK_AUTH_KEY,
     JBD_CMD_BASIC_INFO,
     JBD_CMD_CELL_VOLTAGES,
@@ -36,6 +43,11 @@ from .protocol import (
     WATT_HEAD,
     BatteryState,
     DeviceType,
+    bmc_build_frame,
+    bmc_decode_battery_info,
+    bmc_decode_cell_voltages,
+    bmc_expected_length,
+    bmc_parse_frame,
     jbd_build_read_frame,
     jbd_parse_basic_info,
     jbd_parse_cell_voltages,
@@ -68,11 +80,16 @@ class WattCycleConnection:
         self._rx = bytearray()
         self._authed = False
         self._auth_unavailable = False
+        self._write_with_response = True
         self._firmware_version: int | None = None
+        # Wire protocol actually spoken over the link ("watt"/"jbd"/"bmc"). The GATT
+        # service picks the characteristics; the protocol is confirmed by probing.
+        self._protocol_mode: str = device_type.value
+        self._bmc_handshaken = False
         # The analog-read request variant this device answers (learned by probing).
         self._watt_frame: bytes | None = None
         # Pending single-frame waiter (register -> future) for request/response.
-        self._waiters: list[asyncio.Future[BatteryState | list[float]]] = []
+        self._waiters: list[asyncio.Future[BatteryState | list[float] | bool]] = []
         # Rolling capture of raw frames for diagnostics (hex strings).
         self.last_tx: list[str] = []
         self.last_rx: list[str] = []
@@ -105,6 +122,16 @@ class WattCycleConnection:
         assert client is not None
         self._rx.clear()
         self._authed = False
+        self._bmc_handshaken = False
+
+        # Log the full GATT table once per connect — the single most useful diagnostic
+        # for unknown module revisions. Silence via the quiet_logging option if noisy.
+        for service in client.services:
+            chars = ", ".join(
+                f"{char.uuid}[{'|'.join(char.properties)}]"
+                for char in service.characteristics
+            )
+            _LOGGER.info("%s GATT service %s: %s", self._address, service.uuid, chars)
 
         # The configured device type is a guess from the advertisement; the GATT table is
         # authoritative (the vendor app does the same). "WT*" names exist in both families.
@@ -118,13 +145,29 @@ class WattCycleConnection:
             )
             self._device_type = detected
             self._uuids = UUIDS[detected]
+            self._protocol_mode = detected.value
 
         # Proactive pairing handles GATT status 5 (insufficient authentication).
         # Not all backends/proxies support it; failure here is non-fatal.
         try:
-            await asyncio.wait_for(client.pair(), timeout=CONNECT_TIMEOUT)
+            await asyncio.wait_for(client.pair(), timeout=PAIR_TIMEOUT)
         except (BleakError, NotImplementedError, asyncio.TimeoutError, EOFError) as err:
             _LOGGER.debug("pair() skipped for %s: %s", self._address, err)
+
+        # Use the write type the characteristic actually supports; some modules only
+        # accept write-without-response on the command characteristic.
+        try:
+            write_char = client.services.get_characteristic(self._uuids["write"])
+            self._write_with_response = bool(
+                write_char is None or "write" in write_char.properties
+            )
+        except (BleakError, AttributeError):
+            self._write_with_response = True
+        _LOGGER.debug(
+            "%s write characteristic uses response=%s",
+            self._address,
+            self._write_with_response,
+        )
 
         try:
             await client.start_notify(self._uuids["notify"], self._on_notify)
@@ -157,7 +200,9 @@ class WattCycleConnection:
         if not auth_uuid or self._client is None or self._auth_unavailable:
             return False
         try:
-            await self._client.write_gatt_char(auth_uuid, HILINK_AUTH_KEY, response=True)
+            await self._client.write_gatt_char(
+                auth_uuid, HILINK_AUTH_KEY, response=self._write_with_response
+            )
             self._authed = True
             _LOGGER.debug("Sent HiLink auth key to %s", self._address)
             return True
@@ -173,12 +218,14 @@ class WattCycleConnection:
     def _on_notify(self, _char: object, data: bytearray) -> None:
         self.last_rx = [bytes(data).hex()] + self.last_rx[:4]
         self._rx += data
-        if self._device_type is DeviceType.WATT:
-            self._consume_watt()
-        else:
+        if self._protocol_mode == "bmc":
+            self._consume_bmc()
+        elif self._protocol_mode == "jbd":
             self._consume_jbd()
+        else:
+            self._consume_watt()
 
-    def _resolve(self, value: BatteryState | list[float]) -> None:
+    def _resolve(self, value: BatteryState | list[float] | bool) -> None:
         for fut in self._waiters:
             if not fut.done():
                 fut.set_result(value)
@@ -236,15 +283,45 @@ class WattCycleConnection:
             elif cmd == JBD_CMD_CELL_VOLTAGES:
                 self._resolve(jbd_parse_cell_voltages(payload))
 
+    def _consume_bmc(self) -> None:
+        while True:
+            start = self._rx.find(bytes([BMC_HEADER]))
+            if start < 0:
+                self._rx.clear()
+                return
+            if start:
+                del self._rx[:start]
+            total = bmc_expected_length(bytes(self._rx))
+            if total is None or len(self._rx) < total:
+                return
+            frame = bytes(self._rx[:total])
+            del self._rx[:total]
+            parsed = bmc_parse_frame(frame)
+            if parsed is None:
+                # Bad checksum/garbage: skip this header byte and rescan.
+                continue
+            cmd, payload = parsed
+            try:
+                if cmd == BMC_CMD_HANDSHAKE:
+                    self._resolve(True)
+                elif cmd == BMC_CMD_BATTERY_INFO:
+                    self._resolve(bmc_decode_battery_info(payload))
+                elif cmd == BMC_CMD_CELL_VOLTAGE:
+                    self._resolve(bmc_decode_cell_voltages(payload))
+            except (IndexError, ValueError, struct.error):
+                _LOGGER.debug("Failed to decode BMC frame: %s", frame.hex())
+
     async def _request(
         self, frame: bytes, timeout: float = COMMAND_TIMEOUT
-    ) -> BatteryState | list[float]:
+    ) -> BatteryState | list[float] | bool:
         assert self._client is not None
         fut: asyncio.Future = self._hass.loop.create_future()
         self._waiters.append(fut)
         self.last_tx = [frame.hex()] + self.last_tx[:4]
         try:
-            await self._client.write_gatt_char(self._uuids["write"], frame, response=True)
+            await self._client.write_gatt_char(
+                self._uuids["write"], frame, response=self._write_with_response
+            )
             return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             if fut in self._waiters:
@@ -254,9 +331,11 @@ class WattCycleConnection:
         """Connect if needed and return a decoded telemetry snapshot."""
         async with self._lock:
             await self._ensure_connected()
-            if self._device_type is DeviceType.WATT:
-                return await self._poll_watt()
-            return await self._poll_jbd()
+            if self._protocol_mode == "jbd":
+                return await self._poll_jbd()
+            if self._protocol_mode == "bmc":
+                return await self._poll_bmc()
+            return await self._poll_watt()
 
     async def _poll_watt(self) -> BatteryState:
         # Fast path: we already know which request variant this device answers.
@@ -272,13 +351,100 @@ class WattCycleConnection:
         try:
             return await self._probe_watt_variants()
         except asyncio.TimeoutError:
-            # Last resort: some modules gate the data path behind the HiLink handshake.
+            # Some modules gate the data path behind the HiLink handshake.
             if not self._authed and not self._auth_unavailable and await self._force_auth():
                 _LOGGER.warning(
                     "%s: no telemetry response; sent HiLink auth and re-probing", self._address
                 )
-                return await self._probe_watt_variants()
-            raise
+                try:
+                    return await self._probe_watt_variants()
+                except asyncio.TimeoutError:
+                    pass
+            # Last resort: the fff0 service may carry a different wire protocol
+            # (JBD-behind-UART or the new BMC protocol) — probe those too.
+            return await self._probe_other_protocols()
+
+    async def _probe_other_protocols(self) -> BatteryState:
+        """Probe JBD and BMC wire protocols over the current characteristics."""
+        self._protocol_mode = "jbd"
+        self._rx.clear()
+        try:
+            result = await self._request(
+                jbd_build_read_frame(JBD_CMD_BASIC_INFO), timeout=PROBE_TIMEOUT
+            )
+            if isinstance(result, BatteryState):
+                _LOGGER.warning(
+                    "%s speaks the JBD protocol over %s — locking JBD mode",
+                    self._address,
+                    self._uuids["write"],
+                )
+                return await self._poll_jbd_extras(result)
+        except asyncio.TimeoutError:
+            _LOGGER.debug("%s: no answer to JBD basic-info probe", self._address)
+
+        self._protocol_mode = "bmc"
+        self._rx.clear()
+        try:
+            await self._request(bmc_build_frame(BMC_CMD_HANDSHAKE), timeout=PROBE_TIMEOUT)
+            self._bmc_handshaken = True
+            _LOGGER.warning(
+                "%s answered the BMC handshake — locking BMC mode", self._address
+            )
+            return await self._poll_bmc()
+        except asyncio.TimeoutError:
+            _LOGGER.debug("%s: no answer to BMC handshake; trying direct read", self._address)
+        try:
+            result = await self._request(
+                bmc_build_frame(BMC_CMD_BATTERY_INFO), timeout=PROBE_TIMEOUT
+            )
+            if isinstance(result, BatteryState):
+                _LOGGER.warning(
+                    "%s answered a BMC battery-info read — locking BMC mode", self._address
+                )
+                self._bmc_handshaken = True
+                return result
+        except asyncio.TimeoutError:
+            pass
+
+        self._protocol_mode = DeviceType.WATT.value
+        self._rx.clear()
+        raise asyncio.TimeoutError(
+            f"{self._address}: no response to any protocol probe "
+            "(WATT 0x7E/0x1E ±infoData, JBD, BMC)"
+        )
+
+    async def _poll_bmc(self) -> BatteryState:
+        if not self._bmc_handshaken:
+            try:
+                await self._request(bmc_build_frame(BMC_CMD_HANDSHAKE), timeout=PROBE_TIMEOUT)
+            except asyncio.TimeoutError:
+                _LOGGER.debug("%s: BMC handshake unanswered; continuing", self._address)
+            self._bmc_handshaken = True
+        state = await self._request(bmc_build_frame(BMC_CMD_BATTERY_INFO))
+        assert isinstance(state, BatteryState)
+        try:
+            cells = await self._request(
+                bmc_build_frame(BMC_CMD_CELL_VOLTAGE), timeout=PROBE_TIMEOUT
+            )
+            if isinstance(cells, list):
+                state.cell_voltages = cells
+                state.cell_count = len(cells)
+        except asyncio.TimeoutError:
+            _LOGGER.debug("%s: BMC cell-voltage read timed out", self._address)
+        return state
+
+    async def _poll_jbd_extras(self, basic: BatteryState) -> BatteryState:
+        """Augment a JBD basic-info result with cell voltages (best effort)."""
+        try:
+            cells = await self._request(
+                jbd_build_read_frame(JBD_CMD_CELL_VOLTAGES), timeout=PROBE_TIMEOUT
+            )
+            if isinstance(cells, list):
+                basic.cell_voltages = cells
+                basic.cell_count = len(cells)
+        except asyncio.TimeoutError:
+            pass
+        return basic
 
     async def _probe_watt_variants(self) -> BatteryState:
         """Try each analog-read request variant (0x7E/0x1E, ±infoData) until one answers.
@@ -317,7 +483,9 @@ class WattCycleConnection:
         async with self._lock:
             await self._ensure_connected()
             assert self._client is not None
-            await self._client.write_gatt_char(self._uuids["write"], data, response=True)
+            await self._client.write_gatt_char(
+                self._uuids["write"], data, response=self._write_with_response
+            )
 
     async def async_disconnect(self) -> None:
         client = self._client
@@ -350,7 +518,10 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
 
     async def _async_update_data(self) -> BatteryState:
         try:
-            return await self.connection.async_poll()
+            # Hard cap per update: the first refresh runs during HA startup and must not
+            # stall bootstrap while connect retries + frame probing grind on.
+            async with asyncio.timeout(POLL_TIMEOUT):
+                return await self.connection.async_poll()
         except (BleakError, asyncio.TimeoutError, EOFError) as err:
             # Drop the connection so the next cycle re-establishes cleanly.
             await self.connection.async_disconnect()
