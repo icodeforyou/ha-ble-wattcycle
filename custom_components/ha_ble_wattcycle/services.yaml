@@ -1,0 +1,21 @@
+send_raw:
+  name: Send raw frame
+  description: >-
+    Write a raw hex frame to the battery's write characteristic. UNVERIFIED AND
+    DANGEROUS — write commands can change protection parameters, balancing, or
+    disconnect the battery. Read docs/TESTPLAN.md and verify one command at a time.
+  fields:
+    entry_id:
+      name: Battery
+      description: The config entry id of the target battery (find it under Settings > Devices & Services).
+      required: true
+      selector:
+        config_entry:
+          integration: ha_ble_wattcycle
+    data:
+      name: Hex data
+      description: The raw frame as hex, e.g. 7e000103008c000042990d (spaces allowed).
+      required: true
+      example: "7e000103008c000042990d"
+      selector:
+        text:

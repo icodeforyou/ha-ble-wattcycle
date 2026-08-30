@@ -1,0 +1,80 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "confirm": {
+        "title": "Set up WattCycle battery",
+        "description": "Add {name} (detected protocol: {device_type})?\n\nClose the WattCycle phone app while using this integration — the battery usually accepts only one connection at a time.",
+        "data": {
+          "use_hilink_auth": "Send HiLink auth key on connect"
+        },
+        "data_description": {
+          "use_hilink_auth": "Enable only if telemetry stays empty or notifications are refused (GATT status 5)."
+        }
+      },
+      "user": {
+        "title": "Set up WattCycle battery",
+        "data": {
+          "address": "Battery",
+          "use_hilink_auth": "Send HiLink auth key on connect"
+        },
+        "data_description": {
+          "use_hilink_auth": "Enable only if telemetry stays empty or notifications are refused (GATT status 5)."
+        }
+      }
+    },
+    "abort": {
+      "no_devices_found": "No WattCycle-compatible batteries found. Make sure the battery is powered on, in range of a Bluetooth adapter or proxy, and the phone app is closed.",
+      "already_configured": "This battery is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "WattCycle options",
+        "data": {
+          "scan_interval": "Polling interval (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "voltage": { "name": "Voltage" },
+      "current": { "name": "Current" },
+      "power": { "name": "Power" },
+      "soc": { "name": "State of charge" },
+      "soh": { "name": "State of health" },
+      "remaining_capacity": { "name": "Remaining capacity" },
+      "total_capacity": { "name": "Total capacity" },
+      "design_capacity": { "name": "Design capacity" },
+      "cycles": { "name": "Charge cycles" },
+      "mos_temperature": { "name": "MOSFET temperature" },
+      "pcb_temperature": { "name": "PCB temperature" },
+      "cell_voltage_delta": { "name": "Cell voltage delta" },
+      "min_cell_voltage": { "name": "Min cell voltage" },
+      "max_cell_voltage": { "name": "Max cell voltage" },
+      "cell_voltage": { "name": "Cell {number} voltage" }
+    },
+    "binary_sensor": {
+      "charging": { "name": "Charging" },
+      "discharging": { "name": "Discharging" }
+    }
+  },
+  "services": {
+    "send_raw": {
+      "name": "Send raw frame",
+      "description": "Write a raw hex frame to the battery's write characteristic. UNVERIFIED AND DANGEROUS — write commands can change protection parameters or disconnect the battery. Read docs/TESTPLAN.md first.",
+      "fields": {
+        "entry_id": {
+          "name": "Battery",
+          "description": "The config entry id of the target battery."
+        },
+        "data": {
+          "name": "Hex data",
+          "description": "The raw frame as hex, e.g. 7e000103008c000042990d (spaces allowed)."
+        }
+      }
+    }
+  }
+}

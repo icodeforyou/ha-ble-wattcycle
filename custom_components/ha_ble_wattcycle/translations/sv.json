@@ -1,0 +1,80 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "confirm": {
+        "title": "Lägg till WattCycle-batteri",
+        "description": "Lägg till {name} (identifierat protokoll: {device_type})?\n\nStäng WattCycle-appen i telefonen medan integrationen används — batteriet tillåter oftast bara en anslutning i taget.",
+        "data": {
+          "use_hilink_auth": "Skicka HiLink-auth vid anslutning"
+        },
+        "data_description": {
+          "use_hilink_auth": "Aktivera bara om telemetrin förblir tom eller notiser nekas (GATT status 5)."
+        }
+      },
+      "user": {
+        "title": "Lägg till WattCycle-batteri",
+        "data": {
+          "address": "Batteri",
+          "use_hilink_auth": "Skicka HiLink-auth vid anslutning"
+        },
+        "data_description": {
+          "use_hilink_auth": "Aktivera bara om telemetrin förblir tom eller notiser nekas (GATT status 5)."
+        }
+      }
+    },
+    "abort": {
+      "no_devices_found": "Inga WattCycle-kompatibla batterier hittades. Kontrollera att batteriet är påslaget, inom räckhåll för en Bluetooth-adapter eller proxy, och att telefonappen är stängd.",
+      "already_configured": "Batteriet är redan konfigurerat."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "WattCycle-inställningar",
+        "data": {
+          "scan_interval": "Pollningsintervall (sekunder)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "voltage": { "name": "Spänning" },
+      "current": { "name": "Ström" },
+      "power": { "name": "Effekt" },
+      "soc": { "name": "Laddningsnivå" },
+      "soh": { "name": "Batterihälsa" },
+      "remaining_capacity": { "name": "Kvarvarande kapacitet" },
+      "total_capacity": { "name": "Total kapacitet" },
+      "design_capacity": { "name": "Designkapacitet" },
+      "cycles": { "name": "Laddningscykler" },
+      "mos_temperature": { "name": "MOSFET-temperatur" },
+      "pcb_temperature": { "name": "Kretskortstemperatur" },
+      "cell_voltage_delta": { "name": "Cellspänningsdifferens" },
+      "min_cell_voltage": { "name": "Lägsta cellspänning" },
+      "max_cell_voltage": { "name": "Högsta cellspänning" },
+      "cell_voltage": { "name": "Cell {number} spänning" }
+    },
+    "binary_sensor": {
+      "charging": { "name": "Laddar" },
+      "discharging": { "name": "Urladdar" }
+    }
+  },
+  "services": {
+    "send_raw": {
+      "name": "Skicka rå ram",
+      "description": "Skriv en rå hex-ram till batteriets write-characteristic. OVERIFIERAT OCH FARLIGT — skrivkommandon kan ändra skyddsparametrar eller koppla bort batteriet. Läs docs/TESTPLAN.md först.",
+      "fields": {
+        "entry_id": {
+          "name": "Batteri",
+          "description": "Config entry-id för målbatteriet."
+        },
+        "data": {
+          "name": "Hex-data",
+          "description": "Ramen som hex, t.ex. 7e000103008c000042990d (mellanslag tillåtna)."
+        }
+      }
+    }
+  }
+}

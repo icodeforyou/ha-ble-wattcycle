@@ -1,0 +1,7 @@
+# Reverse-engineering-artefakter — hålls utanför repot (stora binärer)
+WattCycle.apk
+extracted/
+decompiled/
+tools/jadx/
+__pycache__/
+*.pyc
