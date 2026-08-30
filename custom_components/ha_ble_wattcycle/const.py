@@ -20,6 +20,7 @@ DEFAULT_QUIET_LOGGING: Final = False
 # Connection tuning
 CONNECT_TIMEOUT: Final = 20.0
 COMMAND_TIMEOUT: Final = 8.0
+PROBE_TIMEOUT: Final = 4.0  # per request variant while probing the frame format
 MAX_CONNECT_ATTEMPTS: Final = 4
 
 # Services

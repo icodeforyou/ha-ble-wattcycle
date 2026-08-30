@@ -34,6 +34,16 @@ def test_watt_read_frame_v4_has_info_data():
     assert p.watt_build_info_data() in frame
 
 
+def test_watt_analog_probe_frames_cover_both_heads():
+    frames = p.watt_analog_probe_frames()
+    heads = [frame[0] for _label, frame in frames]
+    assert heads == [0x7E, 0x7E, 0x1E, 0x1E]
+    # every variant is a valid frame: CRC over everything before crc+tail
+    for _label, frame in frames:
+        assert frame[-1] == p.WATT_TAIL
+        assert struct.pack("<H", p.modbus_crc16(frame[:-3])) == frame[-3:-1]
+
+
 def _build_watt_analog_frame(new_protocol: bool) -> bytes:
     def u16(v: int) -> bytes:
         return struct.pack(">H", v)

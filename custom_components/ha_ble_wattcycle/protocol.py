@@ -147,6 +147,25 @@ def watt_analog_read_frame(firmware_version: int | None = None) -> bytes:
     return watt_build_read_frame(DP_ANALOG_QUANTITY)
 
 
+def watt_analog_probe_frames() -> list[tuple[str, bytes]]:
+    """All analog-read request variants, in probe order.
+
+    The app's detectProductHeader tries frame head 0x7E first and falls back to 0x1E
+    (responses always start with 0x7E either way). Newer firmware additionally wants
+    the infoData block appended to the read.
+    """
+    info = watt_build_info_data()
+    return [
+        ("head 0x7E", watt_build_read_frame(DP_ANALOG_QUANTITY)),
+        ("head 0x7E + infoData", watt_build_read_frame(DP_ANALOG_QUANTITY, info_data=info)),
+        ("head 0x1E", watt_build_read_frame(DP_ANALOG_QUANTITY, head=WATT_HEAD_ALT)),
+        (
+            "head 0x1E + infoData",
+            watt_build_read_frame(DP_ANALOG_QUANTITY, info_data=info, head=WATT_HEAD_ALT),
+        ),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # WATT frame parsing
 # ---------------------------------------------------------------------------

@@ -109,10 +109,17 @@ def watt_build_info_data(addr: int = 1, voltage_count: int = 32, temperature_cou
 
 
 def watt_analog_read_frames() -> list[tuple[str, bytes]]:
-    """Både v<4- och v>=4-varianten; prova i tur och ordning."""
+    """Alla varianter i prob-ordning: huvud 0x7E/0x1E, med/utan infoData.
+
+    Appens detectProductHeader provar 0x7E först och faller tillbaka till 0x1E.
+    Svaren börjar alltid med 0x7E oavsett.
+    """
+    info = watt_build_info_data()
     return [
-        ("analog v<4", watt_build_read_frame(DP_ANALOG_QUANTITY)),
-        ("analog v>=4", watt_build_read_frame(DP_ANALOG_QUANTITY, info_data=watt_build_info_data())),
+        ("analog 7E", watt_build_read_frame(DP_ANALOG_QUANTITY)),
+        ("analog 7E+info", watt_build_read_frame(DP_ANALOG_QUANTITY, info_data=info)),
+        ("analog 1E", watt_build_read_frame(DP_ANALOG_QUANTITY, head=0x1E)),
+        ("analog 1E+info", watt_build_read_frame(DP_ANALOG_QUANTITY, info_data=info, head=0x1E)),
     ]
 
 

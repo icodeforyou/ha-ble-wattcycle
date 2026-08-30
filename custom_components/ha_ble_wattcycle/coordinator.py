@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_CONNECT_ATTEMPTS,
+    PROBE_TIMEOUT,
 )
 from .protocol import (
     HILINK_AUTH_KEY,
@@ -38,7 +39,7 @@ from .protocol import (
     jbd_build_read_frame,
     jbd_parse_basic_info,
     jbd_parse_cell_voltages,
-    watt_analog_read_frame,
+    watt_analog_probe_frames,
     watt_decode_analog_quantity,
     watt_expected_length,
     watt_parse_frame,
@@ -66,7 +67,10 @@ class WattCycleConnection:
         self._lock = asyncio.Lock()
         self._rx = bytearray()
         self._authed = False
+        self._auth_unavailable = False
         self._firmware_version: int | None = None
+        # The analog-read request variant this device answers (learned by probing).
+        self._watt_frame: bytes | None = None
         # Pending single-frame waiter (register -> future) for request/response.
         self._waiters: list[asyncio.Future[BatteryState | list[float]]] = []
         # Rolling capture of raw frames for diagnostics (hex strings).
@@ -150,7 +154,7 @@ class WattCycleConnection:
     async def _force_auth(self) -> bool:
         """Write the HiLink key to the auth characteristic. Returns True on success."""
         auth_uuid = self._uuids.get("auth")
-        if not auth_uuid or self._client is None:
+        if not auth_uuid or self._client is None or self._auth_unavailable:
             return False
         try:
             await self._client.write_gatt_char(auth_uuid, HILINK_AUTH_KEY, response=True)
@@ -158,7 +162,12 @@ class WattCycleConnection:
             _LOGGER.debug("Sent HiLink auth key to %s", self._address)
             return True
         except BleakError as err:
-            _LOGGER.warning("HiLink auth write failed for %s: %s", self._address, err)
+            # A missing characteristic will not appear later — remember and stop trying,
+            # so this cannot repeat every poll cycle.
+            self._auth_unavailable = True
+            _LOGGER.info(
+                "HiLink auth not available on %s (%s); will not retry", self._address, err
+            )
             return False
 
     def _on_notify(self, _char: object, data: bytearray) -> None:
@@ -227,14 +236,16 @@ class WattCycleConnection:
             elif cmd == JBD_CMD_CELL_VOLTAGES:
                 self._resolve(jbd_parse_cell_voltages(payload))
 
-    async def _request(self, frame: bytes) -> BatteryState | list[float]:
+    async def _request(
+        self, frame: bytes, timeout: float = COMMAND_TIMEOUT
+    ) -> BatteryState | list[float]:
         assert self._client is not None
         fut: asyncio.Future = self._hass.loop.create_future()
         self._waiters.append(fut)
         self.last_tx = [frame.hex()] + self.last_tx[:4]
         try:
             await self._client.write_gatt_char(self._uuids["write"], frame, response=True)
-            return await asyncio.wait_for(fut, timeout=COMMAND_TIMEOUT)
+            return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             if fut in self._waiters:
                 self._waiters.remove(fut)
@@ -248,19 +259,46 @@ class WattCycleConnection:
             return await self._poll_jbd()
 
     async def _poll_watt(self) -> BatteryState:
-        frame = watt_analog_read_frame(self._firmware_version)
+        # Fast path: we already know which request variant this device answers.
+        if self._watt_frame is not None:
+            try:
+                result = await self._request(self._watt_frame)
+                assert isinstance(result, BatteryState)
+                return result
+            except asyncio.TimeoutError:
+                _LOGGER.debug("%s: known frame variant stopped answering; re-probing", self._address)
+                self._watt_frame = None
+
         try:
-            result = await self._request(frame)
+            return await self._probe_watt_variants()
         except asyncio.TimeoutError:
-            # Some WATT modules gate the data path behind the HiLink handshake. If the
-            # first read gets no response and we have not authed yet, send it and retry.
-            if self._uuids.get("auth") and not self._authed and await self._force_auth():
-                _LOGGER.warning("%s: no telemetry response; sent HiLink and retrying", self._address)
-                result = await self._request(frame)
-            else:
-                raise
-        assert isinstance(result, BatteryState)
-        return result
+            # Last resort: some modules gate the data path behind the HiLink handshake.
+            if not self._authed and not self._auth_unavailable and await self._force_auth():
+                _LOGGER.warning(
+                    "%s: no telemetry response; sent HiLink auth and re-probing", self._address
+                )
+                return await self._probe_watt_variants()
+            raise
+
+    async def _probe_watt_variants(self) -> BatteryState:
+        """Try each analog-read request variant (0x7E/0x1E, ±infoData) until one answers.
+
+        Mirrors the app's detectProductHeader: some devices only respond to frame head
+        0x1E; newer firmware wants the infoData block. Responses always start with 0x7E.
+        """
+        for label, frame in watt_analog_probe_frames():
+            try:
+                result = await self._request(frame, timeout=PROBE_TIMEOUT)
+            except asyncio.TimeoutError:
+                _LOGGER.debug("%s: no answer to analog read (%s)", self._address, label)
+                continue
+            assert isinstance(result, BatteryState)
+            self._watt_frame = frame
+            _LOGGER.info("%s answers analog read variant: %s", self._address, label)
+            return result
+        raise asyncio.TimeoutError(
+            f"{self._address}: no response to any analog-read variant (0x7E/0x1E, ±infoData)"
+        )
 
     async def _poll_jbd(self) -> BatteryState:
         basic = await self._request(jbd_build_read_frame(JBD_CMD_BASIC_INFO))

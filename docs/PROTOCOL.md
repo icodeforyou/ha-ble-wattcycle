@@ -137,6 +137,12 @@ extraherade; läs `WattBleProtocolHandler.read*`-metoderna vid behov.)
 Version fås ur svarsramens byte [1]. Börja med v<4-varianten; om svaret är tomt/kort, prova
 v>=4-varianten.
 
+**Alternativt ramhuvud 0x1E:** appens `detectProductHeader` provar först huvud `0x7E`; vid
+timeout provas samma kommando med huvud `0x1E` ("协议头 0x1E 也无响应" i loggsträngarna), och
+det huvud som svarar används sedan för alla förfrågningar (`currentFrameHead`). **Svar börjar
+alltid med `0x7E`** oavsett förfrågningshuvud (`parseFrame`/`calculateExpectedLength` kräver
+0x7E). Proba därför i ordning: 7E → 7E+info → 1E → 1E+info.
+
 ### Analog quantity — svarets `data`-fält (big-endian), enligt `handleAnalogQuantifyResponse`
 ```
 off  fält
@@ -288,6 +294,21 @@ Felkoder JBD: `0x80` cmd finns ej, `0x81` ogiltig operation, `0x82` checksum-fel
 5. (WATT, vid behov) skriv `HiLink` till `fffa`.
 6. Poll: skicka läsram på writeUUID (`fff2`), ta emot svar via notify, avkoda.
    Realtidspollern (`resumeRealtimeDataPoller`) läser `DP 140` upprepat.
+
+## 9. Känd enhet — valideringsmål (WattCycle DISCOVER 12V 314Ah, självvärmning)
+
+Från officiella datablad/manualer i `docs/` (tillagda av ägaren):
+- 12.8 V nominellt → **4 celler** LiFePO4 (`cell_count` ska bli 4; cellspänningar ~3.2–3.65 V).
+- Designkapacitet **314 Ah** (`designCapacity` råvärde 3140 med /10-skala), 250 A BMS
+  (max kontinuerlig ladd/urladd 250 A; överströmssteg 260±40 A/10 s, 333±100 A/1–2 s).
+- Laddspänning 14.4±0.2 V, ladd-cutoff 14.6 V, urladd-cutoff 10±0.4 V — rimlighetsintervall
+  för `moduleVoltage` ≈ 10–14.6 V.
+- **Självvärmningsmodul** (aktiveras <−5 °C vid laddning, av >10 °C) — styrning/status ej
+  kartlagd i WATT-protokollet ännu (JBD-varianten har `CMD_CONTROL_HEATING = 0xFD`).
+- Appmanualen bekräftar: SoC i heltals-%, totalspänning/ström/effekt i realtid (~1 Hz),
+  balansström, resttid till full/tom, ladd-/urladdningsbrytare, och att styrning kräver
+  inloggat + "bundet" konto medan **läsning fungerar utan bindning** — stödjer att läsvägen
+  är öppen och skrivvägen grindad.
 
 Fällor att bygga för (bekräftade relevanta):
 - **En central i taget** — telefonappen måste vara helt stängd under test.

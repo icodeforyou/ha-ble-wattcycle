@@ -3,5 +3,9 @@ WattCycle.apk
 extracted/
 decompiled/
 tools/jadx/
+
+# Vendor reference PDFs (datasheet/manuals) — kept locally, not shipped in the repo
+docs/*.pdf
+
 __pycache__/
 *.pyc
