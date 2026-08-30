@@ -1,7 +1,7 @@
 {
   "domain": "ha_ble_wattcycle",
   "name": "WattCycle BLE Battery",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "codeowners": [
     "@icodeforyou"
   ],

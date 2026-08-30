@@ -325,7 +325,25 @@ Enligt appens AdvData-layout: deviceType=3 (matchar INTE appens enum 16/17/18/48
 UNKNOWN), soc=0 (misstänkt; layouten kan avvika för denna adv-revision). Namnet `WTaHdB1...`
 ligger mycket nära JBD-DG04SA02-listans `WTeHdBD...` → modulfamiljen är besläktad.
 
-## 10. Känd enhet — valideringsmål (WattCycle DISCOVER 12V 314Ah, självvärmning)
+## 10. Känd enhet — BEKRÄFTAD (WattCycle DISCOVER 12V 314Ah, självvärmning)
+
+**Fältverifierad 2026-08-30** (EE:C2:37:00:64:8C, namn `WTaHdB12605110139`, via ESPHome-proxy):
+Modulen exponerar WATT-familjens GATT (service `fff0`, write `fff2`, notify `fff1`, ingen `fffa`)
+men talar **JBD-protokollet** över dessa karaktäristikor — "JBD bakom fff0-brygga". WATT-ramar
+(0x7E/0x1E) och BMC ignoreras; `DD A5 03/04` svarar direkt. Namnmönstret `WTaHdB*`/`WTeHdB*` ⇒
+JBD-tråd oavsett GATT-tjänst.
+
+Verifierade värden mot datablad/app (diagnostics-dump):
+- 4 celler à 3.295–3.296 V; packspänning 13.18 V = cellsumman ✓
+- SoC 51 % (payload-byte 0x33) ✓; kvarvarande 161.15 Ah; **totalt 314.0 Ah** ✓ (datablad)
+- 3 cykler (nytt batteri) ✓; 4 NTC:er 18.1–20.0 °C (0x0Bxx → (raw−2731)/10) ✓
+- Exempelramar: TX `dd a5 03 00 ff fd 77` → RX `dd 03 00 2f 0526 0000 3ef3 7aa8 0003 ...`
+- Ström vid vila = 0.0 A ✓; **teckenkonvention vid laddning fortfarande overifierad**.
+
+Kvar att kartlägga: FET-statusbyte [20] (0x03 = ladd+urladd på), skyddsbitfält [16:18],
+extrafält efter NTC:erna (`0080 007aa8...` — trolig utökad JBD-variant), värmestyrning.
+
+### Ursprungliga valideringsmål (datablad)
 
 Från officiella datablad/manualer i `docs/` (tillagda av ägaren):
 - 12.8 V nominellt → **4 celler** LiFePO4 (`cell_count` ska bli 4; cellspänningar ~3.2–3.65 V).

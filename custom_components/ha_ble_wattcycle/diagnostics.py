@@ -30,6 +30,7 @@ async def async_get_config_entry_diagnostics(
         },
         "connection": {
             "connected": connection.connected,
+            "protocol_mode": connection.protocol_mode,
             "firmware_version": connection.firmware_version,
             "last_tx_frames": connection.last_tx,
             "last_rx_frames": connection.last_rx,

@@ -21,6 +21,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     COMMAND_TIMEOUT,
+    CONF_PROTOCOL_MODE,
     CONNECT_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -69,6 +70,7 @@ class WattCycleConnection:
         address: str,
         device_type: DeviceType,
         use_hilink_auth: bool,
+        protocol_hint: str | None = None,
     ) -> None:
         self._hass = hass
         self._address = address
@@ -84,7 +86,13 @@ class WattCycleConnection:
         self._firmware_version: int | None = None
         # Wire protocol actually spoken over the link ("watt"/"jbd"/"bmc"). The GATT
         # service picks the characteristics; the protocol is confirmed by probing.
-        self._protocol_mode: str = device_type.value
+        # A persisted hint from an earlier discovery skips the probe ladder entirely.
+        if protocol_hint in ("watt", "jbd", "bmc"):
+            self._protocol_mode = protocol_hint
+            self._mode_locked = True
+        else:
+            self._protocol_mode = device_type.value
+            self._mode_locked = False
         self._bmc_handshaken = False
         # The analog-read request variant this device answers (learned by probing).
         self._watt_frame: bytes | None = None
@@ -97,6 +105,11 @@ class WattCycleConnection:
     @property
     def firmware_version(self) -> int | None:
         return self._firmware_version
+
+    @property
+    def protocol_mode(self) -> str | None:
+        """The confirmed wire protocol, or None while still probing."""
+        return self._protocol_mode if self._mode_locked else None
 
     @property
     def connected(self) -> bool:
@@ -145,7 +158,8 @@ class WattCycleConnection:
             )
             self._device_type = detected
             self._uuids = UUIDS[detected]
-            self._protocol_mode = detected.value
+            if not self._mode_locked:
+                self._protocol_mode = detected.value
 
         # Proactive pairing handles GATT status 5 (insufficient authentication).
         # Not all backends/proxies support it; failure here is non-fatal.
@@ -373,6 +387,7 @@ class WattCycleConnection:
                 jbd_build_read_frame(JBD_CMD_BASIC_INFO), timeout=PROBE_TIMEOUT
             )
             if isinstance(result, BatteryState):
+                self._mode_locked = True
                 _LOGGER.warning(
                     "%s speaks the JBD protocol over %s — locking JBD mode",
                     self._address,
@@ -387,6 +402,7 @@ class WattCycleConnection:
         try:
             await self._request(bmc_build_frame(BMC_CMD_HANDSHAKE), timeout=PROBE_TIMEOUT)
             self._bmc_handshaken = True
+            self._mode_locked = True
             _LOGGER.warning(
                 "%s answered the BMC handshake — locking BMC mode", self._address
             )
@@ -402,6 +418,7 @@ class WattCycleConnection:
                     "%s answered a BMC battery-info read — locking BMC mode", self._address
                 )
                 self._bmc_handshaken = True
+                self._mode_locked = True
                 return result
         except asyncio.TimeoutError:
             pass
@@ -460,6 +477,8 @@ class WattCycleConnection:
                 continue
             assert isinstance(result, BatteryState)
             self._watt_frame = frame
+            self._protocol_mode = "watt"
+            self._mode_locked = True
             _LOGGER.info("%s answers analog read variant: %s", self._address, label)
             return result
         raise asyncio.TimeoutError(
@@ -521,12 +540,24 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
             # Hard cap per update: the first refresh runs during HA startup and must not
             # stall bootstrap while connect retries + frame probing grind on.
             async with asyncio.timeout(POLL_TIMEOUT):
-                return await self.connection.async_poll()
+                state = await self.connection.async_poll()
+            self._async_persist_protocol_mode()
+            return state
         except (BleakError, asyncio.TimeoutError, EOFError) as err:
             # Drop the connection so the next cycle re-establishes cleanly.
             await self.connection.async_disconnect()
             detail = str(err) or type(err).__name__
             raise UpdateFailed(f"Error polling {self.entry.title}: {detail}") from err
+
+    def _async_persist_protocol_mode(self) -> None:
+        """Store the probed wire protocol on the entry so restarts skip the ladder."""
+        mode = self.connection.protocol_mode
+        if mode is None or self.entry.data.get(CONF_PROTOCOL_MODE) == mode:
+            return
+        _LOGGER.info("Persisting discovered protocol '%s' for %s", mode, self.entry.title)
+        self.hass.config_entries.async_update_entry(
+            self.entry, data={**self.entry.data, CONF_PROTOCOL_MODE: mode}
+        )
 
     async def async_shutdown(self) -> None:
         await super().async_shutdown()

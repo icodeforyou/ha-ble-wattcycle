@@ -18,6 +18,7 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     ATTR_DATA,
     CONF_DEVICE_TYPE,
+    CONF_PROTOCOL_MODE,
     CONF_QUIET_LOGGING,
     CONF_SCAN_INTERVAL,
     CONF_USE_HILINK_AUTH,
@@ -46,9 +47,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: WattCycleConfigEntry) ->
     address: str = entry.data["address"]
     device_type = DeviceType(entry.data.get(CONF_DEVICE_TYPE, DeviceType.WATT.value))
     use_hilink_auth: bool = entry.data.get(CONF_USE_HILINK_AUTH, False)
+    protocol_hint: str | None = entry.data.get(CONF_PROTOCOL_MODE)
     scan_interval: int = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
 
-    connection = WattCycleConnection(hass, address, device_type, use_hilink_auth)
+    connection = WattCycleConnection(
+        hass, address, device_type, use_hilink_auth, protocol_hint
+    )
     coordinator = WattCycleCoordinator(hass, entry, connection, scan_interval)
     await coordinator.async_config_entry_first_refresh()
 

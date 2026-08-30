@@ -10,6 +10,9 @@ DOMAIN: Final = "ha_ble_wattcycle"
 CONF_ADDRESS: Final = "address"
 CONF_DEVICE_TYPE: Final = "device_type"
 CONF_USE_HILINK_AUTH: Final = "use_hilink_auth"
+# Wire protocol confirmed by probing ("watt"/"jbd"/"bmc"); persisted after discovery
+# so restarts skip the probe ladder.
+CONF_PROTOCOL_MODE: Final = "protocol_mode"
 
 # Options
 CONF_SCAN_INTERVAL: Final = "scan_interval"
