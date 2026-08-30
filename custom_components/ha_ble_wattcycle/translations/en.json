@@ -33,7 +33,11 @@
       "init": {
         "title": "WattCycle options",
         "data": {
-          "scan_interval": "Polling interval (seconds)"
+          "scan_interval": "Polling interval (seconds)",
+          "quiet_logging": "Quiet logging"
+        },
+        "data_description": {
+          "quiet_logging": "Suppress this integration's info/warning log messages (errors are still logged). Enable once everything works to keep the log clean."
         }
       }
     }

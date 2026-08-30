@@ -14,6 +14,8 @@ CONF_USE_HILINK_AUTH: Final = "use_hilink_auth"
 # Options
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 DEFAULT_SCAN_INTERVAL: Final = 30  # seconds
+CONF_QUIET_LOGGING: Final = "quiet_logging"
+DEFAULT_QUIET_LOGGING: Final = False
 
 # Connection tuning
 CONNECT_TIMEOUT: Final = 20.0

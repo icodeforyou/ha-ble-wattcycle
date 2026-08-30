@@ -33,7 +33,11 @@
       "init": {
         "title": "WattCycle-inställningar",
         "data": {
-          "scan_interval": "Pollningsintervall (sekunder)"
+          "scan_interval": "Pollningsintervall (sekunder)",
+          "quiet_logging": "Tyst loggning"
+        },
+        "data_description": {
+          "quiet_logging": "Dämpa integrationens info-/varningsmeddelanden i loggen (fel loggas fortfarande). Slå på när allt fungerar för att hålla loggen ren."
         }
       }
     }

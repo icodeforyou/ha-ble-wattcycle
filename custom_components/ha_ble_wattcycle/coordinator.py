@@ -102,6 +102,19 @@ class WattCycleConnection:
         self._rx.clear()
         self._authed = False
 
+        # The configured device type is a guess from the advertisement; the GATT table is
+        # authoritative (the vendor app does the same). "WT*" names exist in both families.
+        detected = self._detect_type_from_gatt(client)
+        if detected is not None and detected is not self._device_type:
+            _LOGGER.warning(
+                "%s: GATT services indicate %s protocol (configured as %s) — switching",
+                self._address,
+                detected.value,
+                self._device_type.value,
+            )
+            self._device_type = detected
+            self._uuids = UUIDS[detected]
+
         # Proactive pairing handles GATT status 5 (insufficient authentication).
         # Not all backends/proxies support it; failure here is non-fatal.
         try:
@@ -109,20 +122,44 @@ class WattCycleConnection:
         except (BleakError, NotImplementedError, asyncio.TimeoutError, EOFError) as err:
             _LOGGER.debug("pair() skipped for %s: %s", self._address, err)
 
-        await client.start_notify(self._uuids["notify"], self._on_notify)
+        try:
+            await client.start_notify(self._uuids["notify"], self._on_notify)
+        except BleakError as err:
+            available = [service.uuid for service in client.services]
+            raise UpdateFailed(
+                f"Failed to subscribe to {self._uuids['notify']} on {self._address}: {err!r}. "
+                f"Available services: {available}"
+            ) from err
         await self._maybe_auth()
+
+    def _detect_type_from_gatt(self, client: BleakClientWithServiceCache) -> DeviceType | None:
+        """Pick the protocol family from the services the device actually exposes."""
+        service_uuids = {service.uuid.lower() for service in client.services}
+        for device_type in (DeviceType.WATT, DeviceType.JBD):
+            if UUIDS[device_type]["service"] in service_uuids:
+                return device_type
+        return None
 
     async def _maybe_auth(self) -> None:
         """Write the HiLink key to the WATT auth characteristic if configured."""
         auth_uuid = self._uuids.get("auth")
         if not (self._use_hilink_auth and auth_uuid) or self._client is None:
             return
+        await self._force_auth()
+
+    async def _force_auth(self) -> bool:
+        """Write the HiLink key to the auth characteristic. Returns True on success."""
+        auth_uuid = self._uuids.get("auth")
+        if not auth_uuid or self._client is None:
+            return False
         try:
             await self._client.write_gatt_char(auth_uuid, HILINK_AUTH_KEY, response=True)
             self._authed = True
             _LOGGER.debug("Sent HiLink auth key to %s", self._address)
+            return True
         except BleakError as err:
             _LOGGER.warning("HiLink auth write failed for %s: %s", self._address, err)
+            return False
 
     def _on_notify(self, _char: object, data: bytearray) -> None:
         self.last_rx = [bytes(data).hex()] + self.last_rx[:4]
@@ -212,7 +249,16 @@ class WattCycleConnection:
 
     async def _poll_watt(self) -> BatteryState:
         frame = watt_analog_read_frame(self._firmware_version)
-        result = await self._request(frame)
+        try:
+            result = await self._request(frame)
+        except asyncio.TimeoutError:
+            # Some WATT modules gate the data path behind the HiLink handshake. If the
+            # first read gets no response and we have not authed yet, send it and retry.
+            if self._uuids.get("auth") and not self._authed and await self._force_auth():
+                _LOGGER.warning("%s: no telemetry response; sent HiLink and retrying", self._address)
+                result = await self._request(frame)
+            else:
+                raise
         assert isinstance(result, BatteryState)
         return result
 
@@ -270,7 +316,8 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
         except (BleakError, asyncio.TimeoutError, EOFError) as err:
             # Drop the connection so the next cycle re-establishes cleanly.
             await self.connection.async_disconnect()
-            raise UpdateFailed(f"Error polling {self.entry.title}: {err}") from err
+            detail = str(err) or type(err).__name__
+            raise UpdateFailed(f"Error polling {self.entry.title}: {detail}") from err
 
     async def async_shutdown(self) -> None:
         await super().async_shutdown()

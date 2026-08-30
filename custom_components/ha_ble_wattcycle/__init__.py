@@ -6,6 +6,8 @@ Not affiliated with or endorsed by WattCycle.
 
 from __future__ import annotations
 
+import logging
+
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -16,8 +18,10 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     ATTR_DATA,
     CONF_DEVICE_TYPE,
+    CONF_QUIET_LOGGING,
     CONF_SCAN_INTERVAL,
     CONF_USE_HILINK_AUTH,
+    DEFAULT_QUIET_LOGGING,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     SERVICE_SEND_RAW,
@@ -30,8 +34,15 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 type WattCycleConfigEntry = ConfigEntry[WattCycleCoordinator]
 
 
+def _apply_log_level(entry: WattCycleConfigEntry) -> None:
+    """Quiet the integration's own logger once the user is happy it works."""
+    quiet = entry.options.get(CONF_QUIET_LOGGING, DEFAULT_QUIET_LOGGING)
+    logging.getLogger(__package__).setLevel(logging.ERROR if quiet else logging.NOTSET)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: WattCycleConfigEntry) -> bool:
     """Set up WattCycle BLE from a config entry."""
+    _apply_log_level(entry)
     address: str = entry.data["address"]
     device_type = DeviceType(entry.data.get(CONF_DEVICE_TYPE, DeviceType.WATT.value))
     use_hilink_auth: bool = entry.data.get(CONF_USE_HILINK_AUTH, False)
