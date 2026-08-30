@@ -1,0 +1,143 @@
+# WattCycle-batterikort (Mushroom) för en BEFINTLIG vy/dashboard.
+# Varje toppnivåblock nedan (skiljs av "# ---") är ETT kort: kopiera blocket och
+# klistra in via ✏️ Redigera → Lägg till kort → Manuell (fungerar i masonry och sections).
+# Kräver Mushroom via HACS → Frontend. Entitets-id:n för WTaHdB12605110139 (svenska, v0.1.7+).
+
+# --- KORT 1: Kompakt batterisammanfattning (hero + statuschips + nyckeltal) ---
+type: vertical-stack
+cards:
+  - type: custom:mushroom-template-card
+    entity: sensor.wtahdb12605110139_laddningsniva
+    primary: Batteri 314 Ah
+    secondary: >-
+      {{ states(entity) }} % ·
+      {{ states('sensor.wtahdb12605110139_kvarvarande_kapacitet') | round(0) }} Ah kvar ·
+      {{ states('sensor.wtahdb12605110139_effekt') | round(0) }} W
+    icon: >-
+      {% set soc = states(entity) | int(0) %}
+      {% set lvl = (soc / 10) | round(0, 'floor') | int * 10 %}
+      {% if is_state('binary_sensor.wtahdb12605110139_laddar', 'on') %}
+        mdi:battery-charging-{{ [lvl, 10] | max }}
+      {% elif soc >= 95 %} mdi:battery
+      {% elif lvl >= 10 %} mdi:battery-{{ lvl }}
+      {% else %} mdi:battery-alert-variant-outline {% endif %}
+    icon_color: >-
+      {% set soc = states(entity) | int(0) %}
+      {% if is_state('binary_sensor.wtahdb12605110139_laddar', 'on') %} green
+      {% elif soc <= 20 %} red
+      {% elif soc <= 40 %} amber
+      {% else %} teal {% endif %}
+    badge_icon: >-
+      {% if is_state('binary_sensor.wtahdb12605110139_laddar', 'on') %} mdi:flash {% endif %}
+    badge_color: green
+    tap_action:
+      action: more-info
+  - type: custom:mushroom-chips-card
+    alignment: center
+    chips:
+      - type: template
+        entity: sensor.wtahdb12605110139_spanning
+        icon: mdi:sine-wave
+        icon_color: indigo
+        content: "{{ states(entity) }} V"
+      - type: template
+        entity: sensor.wtahdb12605110139_strom
+        icon: mdi:current-dc
+        icon_color: blue
+        content: "{{ states(entity) }} A"
+      - type: template
+        entity: sensor.wtahdb12605110139_temperatur_1
+        icon: mdi:thermometer
+        icon_color: >-
+          {% set t = states(entity) | float(20) %}
+          {% if t < 5 %}blue{% elif t > 40 %}red{% else %}green{% endif %}
+        content: "{{ states(entity) | round(0) }} °C"
+      - type: template
+        entity: sensor.wtahdb12605110139_cellspanningsdifferens
+        icon: mdi:scale-balance
+        icon_color: >-
+          {% set d = states(entity) | float(0) %}
+          {% if d < 0.030 %} green {% elif d < 0.100 %} amber {% else %} red {% endif %}
+        content: "{{ (states(entity) | float(0) * 1000) | round(0) }} mV"
+
+# --- KORT 2: Celler och temperaturer (detaljer) ---
+type: vertical-stack
+cards:
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: custom:mushroom-entity-card
+        entity: sensor.wtahdb12605110139_cell_1_spanning
+        name: Cell 1
+        icon: mdi:numeric-1-box-outline
+        icon_color: cyan
+      - type: custom:mushroom-entity-card
+        entity: sensor.wtahdb12605110139_cell_2_spanning
+        name: Cell 2
+        icon: mdi:numeric-2-box-outline
+        icon_color: cyan
+      - type: custom:mushroom-entity-card
+        entity: sensor.wtahdb12605110139_cell_3_spanning
+        name: Cell 3
+        icon: mdi:numeric-3-box-outline
+        icon_color: cyan
+      - type: custom:mushroom-entity-card
+        entity: sensor.wtahdb12605110139_cell_4_spanning
+        name: Cell 4
+        icon: mdi:numeric-4-box-outline
+        icon_color: cyan
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: custom:mushroom-template-card
+        entity: sensor.wtahdb12605110139_temperatur_1
+        primary: "{{ states(entity) }} °C"
+        secondary: Givare 1
+        icon: mdi:thermometer
+        icon_color: >-
+          {% set t = states(entity) | float(20) %}
+          {% if t < 0 %}purple{% elif t < 5 %}blue{% elif t > 40 %}red{% else %}green{% endif %}
+      - type: custom:mushroom-template-card
+        entity: sensor.wtahdb12605110139_temperatur_2
+        primary: "{{ states(entity) }} °C"
+        secondary: Givare 2
+        icon: mdi:thermometer
+        icon_color: >-
+          {% set t = states(entity) | float(20) %}
+          {% if t < 0 %}purple{% elif t < 5 %}blue{% elif t > 40 %}red{% else %}green{% endif %}
+      - type: custom:mushroom-template-card
+        entity: sensor.wtahdb12605110139_temperatur_3
+        primary: "{{ states(entity) }} °C"
+        secondary: Givare 3
+        icon: mdi:thermometer
+        icon_color: >-
+          {% set t = states(entity) | float(20) %}
+          {% if t < 0 %}purple{% elif t < 5 %}blue{% elif t > 40 %}red{% else %}green{% endif %}
+      - type: custom:mushroom-template-card
+        entity: sensor.wtahdb12605110139_temperatur_4
+        primary: "{{ states(entity) }} °C"
+        secondary: Givare 4
+        icon: mdi:thermometer
+        icon_color: >-
+          {% set t = states(entity) | float(20) %}
+          {% if t < 0 %}purple{% elif t < 5 %}blue{% elif t > 40 %}red{% else %}green{% endif %}
+
+# --- KORT 3: Historik (24 h SoC + 12 h effekt/ström) ---
+type: vertical-stack
+cards:
+  - type: history-graph
+    title: Laddningsnivå (24 h)
+    hours_to_show: 24
+    entities:
+      - entity: sensor.wtahdb12605110139_laddningsniva
+        name: SoC
+  - type: history-graph
+    title: Effekt och ström (12 h)
+    hours_to_show: 12
+    entities:
+      - entity: sensor.wtahdb12605110139_effekt
+        name: Effekt
+      - entity: sensor.wtahdb12605110139_strom
+        name: Ström
