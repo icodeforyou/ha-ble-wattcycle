@@ -52,6 +52,8 @@ from .protocol import (
     DeviceType,
     FaultRecord,
     JbdAck,
+    JbdClock,
+    JbdRecordInfo,
     bmc_build_frame,
     bmc_decode_battery_info,
     bmc_decode_cell_voltages,
@@ -61,8 +63,9 @@ from .protocol import (
     jbd_build_restart_frame,
     jbd_parse_basic_info,
     jbd_parse_cell_voltages,
+    jbd_parse_clock,
     jbd_parse_fault_record,
-    jbd_parse_u32,
+    jbd_parse_record_info,
     watt_analog_probe_frames,
     watt_decode_analog_quantity,
     watt_expected_length,
@@ -113,13 +116,12 @@ class WattCycleConnection:
         self.last_tx: list[str] = []
         self.last_rx: list[str] = []
         self.last_ack: JbdAck | None = None
-        # BMS event log (JBD 0x07/0x08) and the BMS clock (0x06) read alongside it.
-        self.event_count: int | None = None
+        # BMS record log (JBD 0x07/0x08) and the "system time" (0x06) read alongside it.
+        self.record_info: JbdRecordInfo | None = None
         self.events: list[FaultRecord] = []
-        self.bms_time: int | None = None  # BMS seconds at the moment the log was read
-        self.bms_time_read_at: datetime | None = None
+        self.bms_clock: JbdClock | None = None
+        self.bms_clock_read_at: datetime | None = None
         self._event_log_supported: bool | None = None
-        self._records_pending = 0
 
     @property
     def firmware_version(self) -> int | None:
@@ -316,9 +318,12 @@ class WattCycleConnection:
                 self._resolve(jbd_parse_basic_info(payload))
             elif status == 0 and cmd == JBD_CMD_CELL_VOLTAGES:
                 self._resolve(jbd_parse_cell_voltages(payload))
-            elif status == 0 and cmd in (JBD_CMD_RECORD_TOTAL, JBD_CMD_SYSTEM_TIME):
-                value = jbd_parse_u32(payload)
-                self._resolve(value if value is not None else JbdAck(cmd, 0xFF))
+            elif status == 0 and cmd == JBD_CMD_RECORD_TOTAL:
+                info = jbd_parse_record_info(payload)
+                self._resolve(info if info is not None else JbdAck(cmd, 0xFF))
+            elif status == 0 and cmd == JBD_CMD_SYSTEM_TIME:
+                clock = jbd_parse_clock(payload)
+                self._resolve(clock if clock is not None else JbdAck(cmd, 0xFF))
             elif status == 0 and cmd == JBD_CMD_RECORD_CURRENT:
                 record = jbd_parse_fault_record(payload)
                 self._resolve(record if record is not None else JbdAck(cmd, 0xFF))
@@ -517,49 +522,41 @@ class WattCycleConnection:
             f"{self._address}: no response to any analog-read variant (0x7E/0x1E, ±infoData)"
         )
 
-    async def _refresh_event_log(self) -> None:
-        """Read the record count and BMS clock every poll, then at most a few records.
+    @property
+    def event_count(self) -> int | None:
+        """Records written according to 0x07 (index field). Meaning unverified."""
+        return self.record_info.index if self.record_info else None
 
-        Field observation (2026-09-07): each 0x08 round trip took ~5 s on this pack, so a
-        full read must never happen inside one poll. Records are fetched a few at a time
-        across polls, deduplicated on their raw header, and kept newest-first up to
-        MAX_EVENT_RECORDS. What a record represents (fault entry vs periodic snapshot) is
-        still unverified — see docs/PROTOCOL.md.
+    async def _refresh_event_log(self) -> None:
+        """Read 0x07 and 0x06 every poll, then EVENT_RECORDS_PER_POLL records via 0x08.
+
+        Field observations on the DISCOVER 314Ah (2026-09-07): 0x07 answers two u16
+        (226, 300 — index and ring size?), 0x06 answers six bytes of unknown format, each 0x08
+        round trip takes ~5 s and 0x07 resets the record cursor (header byte 3 restarts at 2).
+        Records are deduplicated on their raw header and kept newest-first. Experimental.
         """
         if self._event_log_supported is False:
             return
         result = await self._request(jbd_build_read_frame(JBD_CMD_RECORD_TOTAL))
         if isinstance(result, JbdAck):
             _LOGGER.info(
-                "%s does not answer the event-log count (%s); disabling", self._address, result.error
+                "%s does not answer the record-log count (%s); disabling", self._address, result.error
             )
             self._event_log_supported = False
             return
-        if not isinstance(result, int):
+        if not isinstance(result, JbdRecordInfo):
             return
         self._event_log_supported = True
-        count_changed = result != self.event_count
-        self.event_count = result
+        self.record_info = result
         clock = await self._request(jbd_build_read_frame(JBD_CMD_SYSTEM_TIME))
-        rebooted = False
-        if isinstance(clock, int):
-            rebooted = self.bms_time is not None and clock < self.bms_time
-            self.bms_time = clock
-            self.bms_time_read_at = datetime.now(timezone.utc)
-        if rebooted:
-            _LOGGER.info("%s BMS clock went backwards (%s -> %s): BMS restarted",
-                         self._address, self.bms_time, clock)
-        if not (count_changed or rebooted or not self.events) and self._records_pending <= 0:
-            return
-        if count_changed or rebooted:
-            self._records_pending = min(result, MAX_EVENT_RECORDS)
+        if isinstance(clock, JbdClock):
+            self.bms_clock = clock
+            self.bms_clock_read_at = datetime.now(timezone.utc)
         seen = {rec.key for rec in self.events}
-        for _ in range(min(self._records_pending, EVENT_RECORDS_PER_POLL)):
+        for _ in range(EVENT_RECORDS_PER_POLL):
             rec = await self._request(jbd_build_read_frame(JBD_CMD_RECORD_CURRENT))
-            self._records_pending -= 1
             if not isinstance(rec, FaultRecord):
-                _LOGGER.debug("%s event log read stopped: %r", self._address, rec)
-                self._records_pending = 0
+                _LOGGER.debug("%s record read stopped: %r", self._address, rec)
                 break
             if rec.key in seen:
                 continue
@@ -568,11 +565,7 @@ class WattCycleConnection:
         del self.events[MAX_EVENT_RECORDS:]
 
     def event_time(self, record: FaultRecord) -> datetime | None:
-        """Wall-clock time of a record, anchored on the BMS clock at read time.
-
-        Returns None until the record timestamp format is understood: the observed header
-        bytes do not line up with the 0x06 clock, so no age can be derived yet.
-        """
+        """Wall-clock time of a record. None until the header/clock formats are understood."""
         return None
 
     async def _poll_jbd(self) -> BatteryState:

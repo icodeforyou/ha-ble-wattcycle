@@ -37,7 +37,7 @@ RESTART_REFRESH_DELAY: Final = 8
 
 # BMS event log (JBD 0x07/0x08)
 MAX_EVENT_RECORDS: Final = 50  # records kept in memory, newest first
-EVENT_RECORDS_PER_POLL: Final = 3  # observed ~5 s per 0x08 round trip; never stall a poll
+EVENT_RECORDS_PER_POLL: Final = 1  # observed ~5 s per 0x08 round trip; never stall a poll
 EVENT_BMS_EVENT: Final = f"{DOMAIN}_bms_event"
 
 MANUFACTURER: Final = "WattCycle (reverse-engineered)"

@@ -65,10 +65,10 @@ landström tappar allt 12 V — inklusive BLE-proxyn — strömmen en kort stund
 
 Första fältdata 2026-09-07: 0x07 och 0x06 svarar, 0x08 ger 68-byte LE-poster (se PROTOCOL.md
 §10.2), ~5 s per post. Öppna frågor att besvara med diagnostikdumpar över tid:
-1. Ändras `event_log.count` någonsin? Om den är konstant (ringbuffer) eller stiger var 5:e s
-   (snapshot-logg) säger det vad en post är.
+1. Ändras `event_log.record_index` (226 vid första läsningen, kapacitet 300)? Stiger den var
+   5:e s är det en snapshot-logg; hoppar den bara vid händelser är det en fellogg.
 2. Skiljer sig posterna åt i innehåll (spänning/skydd) när batteriet faktiskt ändrar tillstånd,
    eller är det alltid nuläget? Jämför `records[].header` och innehåll före/efter omstarten (fas D).
-3. Huvudets byte 4–8 mot `bms_time`: hitta sambandet (BCD? sekunder sedan start? annan epok?).
-4. Nollställer 0x07 cursorn (byte 3 börjar om på samma värde efter varje 0x07)?
+3. Huvudets byte 4–9 mot `bms_clock_raw` (6 byte, okänt format): hitta sambandet.
+4. Bekräftat: 0x07 nollställer cursorn (byte 3 startar på 2 efter varje 0x07). Varför 2?
 Sensorn *Senaste BMS-händelse* visar okänt värde tills (3) är löst; attributen visar posten.

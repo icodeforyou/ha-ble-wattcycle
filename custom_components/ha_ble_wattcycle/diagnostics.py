@@ -53,10 +53,13 @@ async def async_get_config_entry_diagnostics(
         },
         "state": asdict(coordinator.data) if coordinator.data else None,
         "event_log": {
-            "count": connection.event_count,
-            "bms_time": connection.bms_time,
-            "bms_time_read_at": (
-                connection.bms_time_read_at.isoformat() if connection.bms_time_read_at else None
+            "record_index": connection.record_info.index if connection.record_info else None,
+            "record_capacity": (
+                connection.record_info.capacity if connection.record_info else None
+            ),
+            "bms_clock_raw": connection.bms_clock.hex if connection.bms_clock else None,
+            "bms_clock_read_at": (
+                connection.bms_clock_read_at.isoformat() if connection.bms_clock_read_at else None
             ),
             "records": [
                 {

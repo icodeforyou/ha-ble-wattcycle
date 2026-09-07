@@ -401,8 +401,8 @@ i appen.
 
 | cmd  | Riktning | Data | Betydelse | Status i integrationen |
 |------|----------|------|-----------|------------------------|
-| 0x06 | läs | → u32 BE | BMS-klocka i sekunder (epok okänd: Unix om appen ställt den, annars troligen sedan start) | läses varje poll (v0.3.0) — används för att åldersbestämma loggposter och upptäcka omstart (klockan går bakåt) |
-| 0x07 | läs | → u32 BE | antal loggposter (nollställer troligen läscursorn — **verifiera**) | läses varje poll (v0.3.0) |
+| 0x06 | läs | → **6 byte, format okänt** (obs: `15 01 00 04 02 01`, 17 min tidigare `16 44 23 03 …`) | appen tolkar de 4 första som u32 BE Unix-tid — ger nonsens på vår modul | läses varje poll, exponeras rått (v0.3.2) |
+| 0x07 | läs | → 2× u16 BE (`00 e2 01 2c` = 226, 300) | TROR: index/skrivna poster och ringstorlek; 300 (`01 2c`) inleder även varje 0x08-post. Nollställer 0x08-cursorn (byte 3 börjar om på 2) — observerat | läses varje poll (v0.3.2) |
 | 0x08 | läs | → post (68 B, LE) | "aktuell post"; appen: nollställ → 0x07 → 0x08 × antal | max 3/poll, experimentellt (v0.3.0); ~5 s per svar observerat |
 | 0x0A | skriv | `18 81` | **återställ fabriksinställningar — skicka ALDRIG** | avsiktligt ej exponerat |
 | 0x0E | skriv | `81 18` | mjuk omstart av BMS ("Reboot system") → `DD 5A 0E 02 81 18 FF 57 77` | knapp + tjänst `restart_bms` (v0.3.0), **overifierat mot hårdvara** |
@@ -426,11 +426,10 @@ De fem läsningarna hade identiskt innehåll sånär som på SS/TT och enstaka m
 cursor — inte en ren fellogg. Tidsstämpelformatet i huvudet är olöst (matchar inte 0x06-klockan
 373564163 = 0x16442303 rakt av).
 
-Integrationen (v0.3.0, experimentellt) läser antal (0x07) + klocka (0x06) varje poll och högst
-3 poster per poll (0x08), dedupliserade på råhuvudet, max 50 i minnet. Exponeras som sensorerna
+Integrationen (v0.3.2, experimentellt) läser 0x07 + 0x06 varje poll och 1 post per poll (0x08), dedupliserade på råhuvudet, max 50 i minnet. Exponeras som sensorerna
 *BMS-loggposter* och *Senaste BMS-händelse* (posten som attribut inkl. `raw_header`) samt i
-diagnostiken. Loggboks-events är avstängda tills postens semantik är förstådd. Klockan som går
-bakåt mellan två polls tolkas som BMS-omstart (loggas).
+diagnostiken. Loggboks-events är avstängda tills postens semantik är förstådd. Ingen omstartsdetektering via 0x06 —
+formatet är okänt och värdet är inte monotont.
 
 Kvar att kartlägga: BMS-status-bitordning, 0x06-klockans epok, loggpostens huvud (byte 0–9: räknare/tidsstämpel), vad en 0x08-post representerar, om 0x07 nollställer cursorn.
 

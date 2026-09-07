@@ -315,7 +315,12 @@ def test_jbd_record_key_is_header_and_short_payload_rejected():
     assert p.jbd_parse_fault_record(REAL_RECORD[:30]) is None
 
 
-def test_jbd_parse_u32():
-    assert p.jbd_parse_u32(bytes.fromhex("00000007")) == 7
-    assert p.jbd_parse_u32(bytes.fromhex("16442303")) == 373564163
-    assert p.jbd_parse_u32(b"\x00\x01") is None
+def test_jbd_record_info_and_clock_real_frames():
+    # 0x07 reply 2026-09-07: dd 07 00 04 | 00 e2 01 2c | fe ed 77
+    info = p.jbd_parse_record_info(bytes.fromhex("00e2012c"))
+    assert info == p.JbdRecordInfo(index=226, capacity=300)
+    assert p.jbd_parse_record_info(b"\x00") is None
+    # 0x06 reply: dd 06 00 06 | 15 01 00 04 02 01 | ff dd 77 — kept raw
+    clock = p.jbd_parse_clock(bytes.fromhex("150100040201"))
+    assert clock.hex == "15 01 00 04 02 01"
+    assert p.jbd_parse_clock(b"") is None

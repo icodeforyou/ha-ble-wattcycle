@@ -537,11 +537,45 @@ class JbdAck:
         return JBD_ERRORS.get(self.status, f"status 0x{self.status:02x}")
 
 
-def jbd_parse_u32(payload: bytes) -> int | None:
-    """Decode a u32 BE payload (0x06 system time, 0x07 record count)."""
+@dataclass(frozen=True)
+class JbdRecordInfo:
+    """Reply to 0x07 as observed on the DISCOVER 314Ah: `00 e2 01 2c` = two u16 BE.
+
+    Read as (index=226, capacity=300); 300 also leads every 0x08 record header, so this looks
+    like a 300-slot ring buffer with 226 slots written. Interpretation unverified.
+    """
+
+    index: int
+    capacity: int
+
+
+def jbd_parse_record_info(payload: bytes) -> JbdRecordInfo | None:
     if len(payload) < 4:
         return None
-    return struct.unpack(">I", payload[0:4])[0]
+    index, capacity = struct.unpack(">HH", payload[0:4])
+    return JbdRecordInfo(index, capacity)
+
+
+@dataclass(frozen=True)
+class JbdClock:
+    """Reply to 0x06 ("system time"). Observed as 6 raw bytes whose format is unknown.
+
+    The app parses the first four bytes as a big-endian Unix timestamp; on this pack that
+    yields nonsense (e.g. 15 01 00 04 02 01, and 16 44 23 03 .. .. seventeen minutes earlier),
+    so only the raw bytes are kept until the format is understood.
+    """
+
+    raw: bytes
+
+    @property
+    def hex(self) -> str:
+        return self.raw.hex(" ")
+
+
+def jbd_parse_clock(payload: bytes) -> JbdClock | None:
+    if not payload:
+        return None
+    return JbdClock(bytes(payload))
 
 
 @dataclass

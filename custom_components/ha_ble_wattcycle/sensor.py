@@ -252,7 +252,7 @@ class WattCycleTempSensor(WattCycleEntity, SensorEntity):
 
 
 class WattCycleEventCountSensor(WattCycleEntity, SensorEntity):
-    """Number of entries in the BMS event log (JBD 0x07)."""
+    """Record index reported by JBD 0x07 (observed as index/capacity, e.g. 226 of 300)."""
 
     _attr_state_class = SensorStateClass.TOTAL
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -265,6 +265,11 @@ class WattCycleEventCountSensor(WattCycleEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         return self.coordinator.connection.event_count
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        info = self.coordinator.connection.record_info
+        return {"capacity": info.capacity} if info else None
 
 
 class WattCycleLastEventSensor(WattCycleEntity, SensorEntity):
@@ -319,7 +324,8 @@ class WattCycleLastEventSensor(WattCycleEntity, SensorEntity):
             "raw_header": rec.header.hex(" "),
             "sequence": rec.sequence,
             "bms_timestamp_raw": rec.timestamp,
-            "bms_clock": conn.bms_time,
-            "records_total": conn.event_count,
+            "bms_clock_raw": conn.bms_clock.hex if conn.bms_clock else None,
+            "record_index": conn.record_info.index if conn.record_info else None,
+            "record_capacity": conn.record_info.capacity if conn.record_info else None,
             "records_read": len(conn.events),
         }

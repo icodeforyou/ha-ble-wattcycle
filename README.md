@@ -31,8 +31,8 @@ JBD/Xiaoxiang-based packs) over Bluetooth Low Energy. Works through **ESPHome Bl
 - **Restart BMS** button and `restart_bms` service — the app's "Reboot system", for clearing a
   latched protection such as cell overvoltage after a full charge (JBD packs; **unverified
   against hardware until the first field test**, see docs/TESTPLAN.md phase D).
-- **BMS record log (experimental)**: reads the BMS's record count, clock and up to three records
-  per poll (JBD 0x07/0x06/0x08). Exposed as *BMS log entries* and *Last BMS event* (the record
+- **BMS record log (experimental)**: reads the BMS's record index/capacity, its raw "system time" and one
+  record per poll (JBD 0x07/0x06/0x08). Exposed as *BMS log entries* and *Last BMS event* (the record
   as attributes) and in full in diagnostics. The record layout was captured from a DISCOVER
   314Ah (little-endian, unlike the app's parser); what a record represents and how its
   timestamp works is not yet understood, so no logbook events are fired yet.
