@@ -636,8 +636,9 @@ class FaultRecord:
 
     Observed 2026-09-07 (68-byte payload): LITTLE-endian, unlike the app's big-endian
     parseFaultRecord, but with the app's field order from the voltage onwards. Header:
-    `01 2c 00 SS 06 MM DD hh mm ss` — 0x012c = 300 (ring size), SS = records left in the
-    batch, then month, day (bit 6 set), hour, minute, second in binary. Records are written
+    `01 2c 00 SS 06 XX DD hh mm ss` — 0x012c = 300 (ring size), SS = records left in the
+    batch, XX a restart-reset counter (was 02, then 00), day (bit 6 set), hour, minute,
+    second in binary. Records are written
     every 5 minutes (index rose 226→229 in 15 min); 300 slots = ~25 h of history. So this is a
     periodic snapshot ring, not a fault log. Byte 4 (0x06) is not understood.
     """
@@ -662,18 +663,25 @@ class FaultRecord:
         """Byte 3 of the header: records remaining in this read batch (counts down to 0)."""
         return self.header[3]
 
-    def bms_datetime(self, year: int) -> datetime | None:
-        """Record time on the BMS clock: header bytes 5-9 = month, day|0x40, hh, mm, ss (binary).
+    def bms_datetime(self, month: int) -> datetime | None:
+        """Record time on the BMS counter: header bytes 6-9 = day|0x40, hh, mm, ss (binary).
 
-        The header carries no year; pass the year of the BMS clock (see JbdClock).
+        Byte 5 looked like the month (02) until a BMS restart reset it to 00 while the clock's
+        month stayed 02, so it is another restart-reset counter of unknown meaning; the month
+        must come from the BMS clock (JbdClock.fields). Laid out in year 2000 like the clock.
         """
         try:
             return datetime(
-                year, self.header[5], self.header[6] & 0x1F,
+                2000, month, self.header[6] & 0x1F,
                 self.header[7], self.header[8], self.header[9],
             )
         except (ValueError, IndexError):
             return None
+
+    @property
+    def unknown_byte5(self) -> int:
+        """Header byte 5: 02 before, 00 after a BMS restart. Meaning unknown."""
+        return self.header[5]
 
     @property
     def active_protections(self) -> list[str]:

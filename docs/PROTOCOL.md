@@ -411,9 +411,10 @@ i appen.
 
 **Loggpost (0x08) — OBSERVERAD layout på DISCOVER 314Ah (2026-09-07), 68 byte payload, LITTLE-endian:**
 ```
-[0:10]  huvud: 01 2c | 00 | SS | 06 | MM DD hh mm ss
+[0:10]  huvud: 01 2c | 00 | SS | 06 | XX DD hh mm ss
         012c = 300 = ringstorlek; SS = poster kvar i läsbatchen (räknar ned till 0);
-        byte 4 = 06 (okänt); MM månad, DD dag med bit 6 satt (0x43 = dag 3), hh/mm/ss BINÄRT
+        byte 4 = 06 (okänt); XX = 02 före / 00 efter BMS-omstart (INTE månad — klockan sade
+        fortfarande 02), DD dag med bit 6 satt (0x43 = dag 3), hh/mm/ss BINÄRT sedan omstart
         (0x0a = 10 min, 0x2d = 45). Ex: 06 02 43 17 0a 17 = 3 feb 23:10:23 BMS-tid. **VET**
 [10:12] pack-V /100 (4005→13.44 V)   [12:14] ström i16 /100    [14:16] kvarvarande /100 (a77a→313.99)
 [16:18] nominell /100 (a87a→314.0)   [18:20] SKYDD (0001=cell-OV) [20:22] VARNING (0001=cell hög V)

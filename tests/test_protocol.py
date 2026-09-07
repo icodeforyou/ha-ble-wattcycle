@@ -340,6 +340,11 @@ def test_jbd_record_info_and_clock_real_frames():
 
 def test_jbd_record_header_datetime():
     rec = p.jbd_parse_fault_record(REAL_RECORD)  # header 01 2c 00 06 06 02 43 17 0a 17
-    assert rec.bms_datetime(2000) == datetime(2000, 2, 3, 23, 10, 23)
+    assert rec.bms_datetime(2) == datetime(2000, 2, 3, 23, 10, 23)
+    assert rec.unknown_byte5 == 2
     rolled = p.jbd_parse_fault_record(bytes.fromhex("012c0000060244000012") + REAL_RECORD[10:])
-    assert rolled.bms_datetime(2000) == datetime(2000, 2, 4, 0, 0, 18)
+    assert rolled.bms_datetime(2) == datetime(2000, 2, 4, 0, 0, 18)
+    # After the restart byte 5 read 00 while the clock still said month 02.
+    after = p.jbd_parse_fault_record(bytes.fromhex("012c0000060044000f00") + REAL_RECORD[10:])
+    assert after.unknown_byte5 == 0
+    assert after.bms_datetime(2) == datetime(2000, 2, 4, 0, 15, 0)

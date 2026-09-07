@@ -598,7 +598,7 @@ class WattCycleConnection:
         clock_dt = self.bms_clock.bms_datetime
         if clock_dt is None:
             return None
-        rec_dt = record.bms_datetime(2000)
+        rec_dt = record.bms_datetime(clock_dt.month)
         if rec_dt is None or rec_dt > clock_dt:
             # Records carry the same day counter + time of day; a record "in the future"
             # predates a BMS restart (time of day reset) and cannot be placed reliably.
