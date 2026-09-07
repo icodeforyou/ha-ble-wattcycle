@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from bleak.exc import BleakError
 from bleak_retry_connector import BleakClientWithServiceCache, establish_connection
@@ -25,7 +25,9 @@ from .const import (
     CONNECT_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    EVENT_BMS_EVENT,
     MAX_CONNECT_ATTEMPTS,
+    MAX_EVENT_RECORDS,
     PAIR_TIMEOUT,
     POLL_TIMEOUT,
     PROBE_TIMEOUT,
@@ -38,20 +40,29 @@ from .protocol import (
     HILINK_AUTH_KEY,
     JBD_CMD_BASIC_INFO,
     JBD_CMD_CELL_VOLTAGES,
+    JBD_CMD_RECORD_CURRENT,
+    JBD_CMD_RECORD_TOTAL,
+    JBD_CMD_RESTART_SYSTEM,
+    JBD_CMD_SYSTEM_TIME,
     JBD_END,
     JBD_START,
     UUIDS,
     WATT_HEAD,
     BatteryState,
     DeviceType,
+    FaultRecord,
+    JbdAck,
     bmc_build_frame,
     bmc_decode_battery_info,
     bmc_decode_cell_voltages,
     bmc_expected_length,
     bmc_parse_frame,
     jbd_build_read_frame,
+    jbd_build_restart_frame,
     jbd_parse_basic_info,
     jbd_parse_cell_voltages,
+    jbd_parse_fault_record,
+    jbd_parse_u32,
     watt_analog_probe_frames,
     watt_decode_analog_quantity,
     watt_expected_length,
@@ -101,6 +112,13 @@ class WattCycleConnection:
         # Rolling capture of raw frames for diagnostics (hex strings).
         self.last_tx: list[str] = []
         self.last_rx: list[str] = []
+        self.last_ack: JbdAck | None = None
+        # BMS event log (JBD 0x07/0x08) and the BMS clock (0x06) read alongside it.
+        self.event_count: int | None = None
+        self.events: list[FaultRecord] = []
+        self.bms_time: int | None = None  # BMS seconds at the moment the log was read
+        self.bms_time_read_at: datetime | None = None
+        self._event_log_supported: bool | None = None
 
     @property
     def firmware_version(self) -> int | None:
@@ -291,11 +309,24 @@ class WattCycleConnection:
             if frame[-1] != JBD_END:
                 continue
             cmd = frame[1]
+            status = frame[2]
             payload = frame[4 : 4 + length]
-            if cmd == JBD_CMD_BASIC_INFO:
+            if status == 0 and cmd == JBD_CMD_BASIC_INFO:
                 self._resolve(jbd_parse_basic_info(payload))
-            elif cmd == JBD_CMD_CELL_VOLTAGES:
+            elif status == 0 and cmd == JBD_CMD_CELL_VOLTAGES:
                 self._resolve(jbd_parse_cell_voltages(payload))
+            elif status == 0 and cmd in (JBD_CMD_RECORD_TOTAL, JBD_CMD_SYSTEM_TIME):
+                value = jbd_parse_u32(payload)
+                self._resolve(value if value is not None else JbdAck(cmd, 0xFF))
+            elif status == 0 and cmd == JBD_CMD_RECORD_CURRENT:
+                record = jbd_parse_fault_record(payload)
+                self._resolve(record if record is not None else JbdAck(cmd, 0xFF))
+            else:
+                # Write acknowledgement, or a read the BMS rejected (status != 0).
+                ack = JbdAck(cmd, status)
+                self.last_ack = ack
+                _LOGGER.debug("JBD ack for 0x%02x: %s", cmd, ack.error)
+                self._resolve(ack)
 
     def _consume_bmc(self) -> None:
         while True:
@@ -485,6 +516,59 @@ class WattCycleConnection:
             f"{self._address}: no response to any analog-read variant (0x7E/0x1E, ±infoData)"
         )
 
+    async def _refresh_event_log(self) -> None:
+        """Read the record count every poll; fetch the log itself only when it changes.
+
+        The app clears its list, reads 0x07, then reads 0x08 `count` times — the BMS keeps a
+        read cursor. 0x06 is read in the same pass so record timestamps (BMS seconds, unknown
+        epoch) can be anchored to wall-clock time by age.
+        """
+        if self._event_log_supported is False:
+            return
+        result = await self._request(jbd_build_read_frame(JBD_CMD_RECORD_TOTAL))
+        if isinstance(result, JbdAck):
+            _LOGGER.info(
+                "%s does not answer the event-log count (%s); disabling", self._address, result.error
+            )
+            self._event_log_supported = False
+            return
+        if not isinstance(result, int):
+            return
+        self._event_log_supported = True
+        count = result
+        # The clock is cheap and re-anchors record ages every poll; a clock that went
+        # backwards means the BMS rebooted, so the log is re-read even if the count matches.
+        clock = await self._request(jbd_build_read_frame(JBD_CMD_SYSTEM_TIME))
+        rebooted = False
+        if isinstance(clock, int):
+            rebooted = self.bms_time is not None and clock < self.bms_time
+            self.bms_time = clock
+            self.bms_time_read_at = datetime.now(timezone.utc)
+        if count == self.event_count and self.events and not rebooted:
+            return
+        _LOGGER.debug("%s event log: %s records (had %s)", self._address, count, self.event_count)
+        records: list[FaultRecord] = []
+        for _ in range(min(count, MAX_EVENT_RECORDS)):
+            rec = await self._request(jbd_build_read_frame(JBD_CMD_RECORD_CURRENT))
+            if not isinstance(rec, FaultRecord):
+                _LOGGER.debug("%s event log read stopped early: %r", self._address, rec)
+                break
+            if records and rec.key == records[-1].key:
+                # Cursor did not advance — the BMS is repeating the last entry.
+                break
+            records.append(rec)
+        self.event_count = count
+        self.events = records
+
+    def event_time(self, record: FaultRecord) -> datetime | None:
+        """Wall-clock time of a record, anchored on the BMS clock at read time."""
+        if self.bms_time is None or self.bms_time_read_at is None:
+            return None
+        age = self.bms_time - record.timestamp
+        if age < 0:
+            return None
+        return self.bms_time_read_at - timedelta(seconds=age)
+
     async def _poll_jbd(self) -> BatteryState:
         basic = await self._request(jbd_build_read_frame(JBD_CMD_BASIC_INFO))
         assert isinstance(basic, BatteryState)
@@ -495,7 +579,33 @@ class WattCycleConnection:
                 basic.cell_count = len(cells)
         except asyncio.TimeoutError:
             _LOGGER.debug("JBD cell-voltage read timed out; reporting basic info only")
+        try:
+            await self._refresh_event_log()
+        except asyncio.TimeoutError:
+            _LOGGER.debug("JBD event-log read timed out; keeping previous log")
         return basic
+
+    async def async_restart_bms(self) -> JbdAck:
+        """Soft-reboot the BMS (the app's 'Reboot system'). JBD packs only.
+
+        The BMS answers with an ack and then drops the link while it restarts, so the
+        connection is torn down afterwards and the next poll reconnects. Expect every
+        12 V load fed only by the battery to lose power for a moment.
+        """
+        if self._protocol_mode != "jbd":
+            raise ValueError("BMS restart is only known for JBD-protocol packs")
+        async with self._lock:
+            await self._ensure_connected()
+            frame = jbd_build_restart_frame()
+            _LOGGER.info("Sending BMS restart to %s: %s", self._address, frame.hex())
+            try:
+                result = await self._request(frame)
+            finally:
+                # Whatever happened, the BMS is about to (or did) drop us.
+                await self.async_disconnect()
+        if not isinstance(result, JbdAck) or result.command != JBD_CMD_RESTART_SYSTEM:
+            raise ValueError(f"Unexpected reply to restart: {result!r}")
+        return result
 
     async def async_write_raw(self, data: bytes) -> None:
         """Write a raw frame to the write characteristic. UNVERIFIED / DANGEROUS."""
@@ -534,6 +644,7 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
         )
         self.entry = entry
         self.connection = connection
+        self._seen_events: set[tuple[int, int, int]] | None = None
 
     async def _async_update_data(self) -> BatteryState:
         try:
@@ -542,12 +653,50 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
             async with asyncio.timeout(POLL_TIMEOUT):
                 state = await self.connection.async_poll()
             self._async_persist_protocol_mode()
+            self._async_publish_new_events()
             return state
         except (BleakError, asyncio.TimeoutError, EOFError) as err:
             # Drop the connection so the next cycle re-establishes cleanly.
             await self.connection.async_disconnect()
             detail = str(err) or type(err).__name__
             raise UpdateFailed(f"Error polling {self.entry.title}: {detail}") from err
+
+    def _async_publish_new_events(self) -> None:
+        """Fire one HA event per BMS log record not seen before (shown in the logbook).
+
+        The first read after startup only seeds the seen-set: replaying a whole historic
+        log into the logbook on every HA restart would be noise.
+        """
+        events = self.connection.events
+        if not events:
+            return
+        keys = {rec.key for rec in events}
+        if self._seen_events is None:
+            self._seen_events = keys
+            return
+        new = [rec for rec in events if rec.key not in self._seen_events]
+        self._seen_events |= keys
+        for rec in new:
+            when = self.connection.event_time(rec)
+            self.hass.bus.async_fire(
+                EVENT_BMS_EVENT,
+                {
+                    "entry_id": self.entry.entry_id,
+                    "device_name": self.entry.title,
+                    "summary": rec.summary(),
+                    "protections": rec.active_protections,
+                    "warnings": rec.active_warnings,
+                    "bms_timestamp": rec.timestamp,
+                    "event_time": when.isoformat() if when else None,
+                    "voltage": rec.voltage,
+                    "current": rec.current,
+                    "soc": rec.soc,
+                    "max_cell_voltage": rec.max_cell_voltage,
+                    "min_cell_voltage": rec.min_cell_voltage,
+                    "charge_fet_on": rec.charge_fet_on,
+                    "discharge_fet_on": rec.discharge_fet_on,
+                },
+            )
 
     def _async_persist_protocol_mode(self) -> None:
         """Store the probed wire protocol on the entry so restarts skip the ladder."""

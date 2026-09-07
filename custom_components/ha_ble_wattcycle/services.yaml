@@ -19,3 +19,18 @@ send_raw:
       example: "7e000103008c000042990d"
       selector:
         text:
+
+restart_bms:
+  name: Restart BMS
+  description: >-
+    Soft-reboot the battery's BMS — the same command as the WattCycle app's "Reboot system".
+    Clears latched protections such as cell overvoltage after a full charge. Loads fed only by
+    the battery lose power for a moment while the BMS restarts. JBD-protocol packs only.
+  fields:
+    entry_id:
+      name: Battery
+      description: The config entry id of the target battery.
+      required: true
+      selector:
+        config_entry:
+          integration: ha_ble_wattcycle

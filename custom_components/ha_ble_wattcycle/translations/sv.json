@@ -91,6 +91,12 @@
       },
       "ntc_temperature": {
         "name": "Temperatur {number}"
+      },
+      "bms_event_count": {
+        "name": "BMS-loggposter"
+      },
+      "bms_last_event": {
+        "name": "Senaste BMS-händelse"
       }
     },
     "binary_sensor": {
@@ -150,6 +156,26 @@
       },
       "protection_mos_software_lock": {
         "name": "MOSFET mjukvarulås"
+      },
+      "heating": {
+        "name": "Självvärmning"
+      },
+      "warning": {
+        "name": "BMS-varning"
+      },
+      "protection_charge_mos_broken": {
+        "name": "Fel ladd-MOSFET"
+      },
+      "protection_discharge_mos_broken": {
+        "name": "Fel urladd-MOSFET"
+      },
+      "protection_mos_overtemperature": {
+        "name": "Skydd övertemperatur MOSFET"
+      }
+    },
+    "button": {
+      "restart_bms": {
+        "name": "Starta om BMS"
       }
     }
   },
@@ -165,6 +191,16 @@
         "data": {
           "name": "Hex-data",
           "description": "Ramen som hex, t.ex. 7e000103008c000042990d (mellanslag tillåtna)."
+        }
+      }
+    },
+    "restart_bms": {
+      "name": "Starta om BMS",
+      "description": "Mjuk omstart av batteriets BMS (samma kommando som appens \"Reboot system\"). Släpper låsta skydd, t.ex. cellöverspänning efter fulladdning. Laster som bara matas från batteriet tappar strömmen en kort stund.",
+      "fields": {
+        "entry_id": {
+          "name": "Batteri",
+          "description": "Config entry-id för batteriet."
         }
       }
     }

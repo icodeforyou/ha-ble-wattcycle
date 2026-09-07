@@ -18,6 +18,10 @@ interoperability (EU Directive 2009/24/EC Art. 6). MIT licensed.
     notify, `pair()`, HiLink fallback, retries, raw-frame capture) + `WattCycleCoordinator`.
   - `config_flow.py`, `__init__.py`, `entity.py`, `sensor.py`, `binary_sensor.py`,
     `diagnostics.py`, `manifest.json`, `services.yaml`, `strings.json`, `translations/`.
+- `button.py` — BMS restart (JBD 0x0E). The only write command exposed as an entity; MOS
+  control (0xFB) and heating (0xFD) are documented in PROTOCOL.md but deliberately not wired.
+- `logbook.py` — describes `ha_ble_wattcycle_bms_event` (one per new BMS log record) for the
+  HA logbook. The coordinator seeds the seen-set on first read so restarts don't replay history.
 - `docs/PROTOCOL.md` — full protocol reference (WATT + JBD, UUIDs, DP 140 telemetry, HiLink auth,
   advertisement layout). **Source of truth — update it when protocol understanding changes.**
 - `docs/TESTPLAN.md` — cautious read-before-write hardware verification plan.
@@ -73,6 +77,9 @@ python3 tools/probe.py --address <MAC> --once [--auth]
 
 Read path confirmed on a DISCOVER 12V 314Ah (JBD protocol over the `fff0` service, no HiLink
 needed). Current sign verified: positive = charging. v0.2.0 decodes the JBD status bytes
-(balance status, protection bitfield, FET state) into binary sensors; whether the protection
-bits actually assert on a real trip is still to be observed. Passive advertisement telemetry
+(balance status, protection bitfield, FET state) into binary sensors — protection bit 0 (cell
+overvoltage) confirmed asserting on a real trip 2026-09-07. v0.3.0 adds the WattCycle basic-info
+tail (warnings, balance current, protocol version), heating status, the BMS restart
+button/service (0x0E) and the BMS event log (0x06/0x07/0x08) — all ported from the app,
+none yet confirmed against hardware. Passive advertisement telemetry
 (SoC/V/A without connecting) is documented but not yet implemented.

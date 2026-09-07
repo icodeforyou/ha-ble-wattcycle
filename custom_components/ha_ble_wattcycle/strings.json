@@ -91,6 +91,12 @@
       },
       "ntc_temperature": {
         "name": "Temperature {number}"
+      },
+      "bms_event_count": {
+        "name": "BMS log entries"
+      },
+      "bms_last_event": {
+        "name": "Last BMS event"
       }
     },
     "binary_sensor": {
@@ -150,6 +156,26 @@
       },
       "protection_mos_software_lock": {
         "name": "MOSFET software lock"
+      },
+      "heating": {
+        "name": "Self-heating"
+      },
+      "warning": {
+        "name": "BMS warning"
+      },
+      "protection_charge_mos_broken": {
+        "name": "Charge MOSFET fault"
+      },
+      "protection_discharge_mos_broken": {
+        "name": "Discharge MOSFET fault"
+      },
+      "protection_mos_overtemperature": {
+        "name": "MOSFET over-temperature protection"
+      }
+    },
+    "button": {
+      "restart_bms": {
+        "name": "Restart BMS"
       }
     }
   },
@@ -165,6 +191,16 @@
         "data": {
           "name": "Hex data",
           "description": "The raw frame as hex, e.g. 7e000103008c000042990d (spaces allowed)."
+        }
+      }
+    },
+    "restart_bms": {
+      "name": "Restart BMS",
+      "description": "Soft-reboot the battery's BMS (the app's \"Reboot system\"). Clears latched protections such as cell overvoltage after a full charge. Battery-only loads lose power briefly.",
+      "fields": {
+        "entry_id": {
+          "name": "Battery",
+          "description": "The config entry id of the target battery."
         }
       }
     }

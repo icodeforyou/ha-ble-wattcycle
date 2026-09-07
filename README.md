@@ -27,7 +27,17 @@ JBD/Xiaoxiang-based packs) over Bluetooth Low Energy. Works through **ESPHome Bl
   overcurrent, short circuit, IC error, MOSFET software lock). These tell you *why* a charge
   stopped: charge FET off + cell overvoltage tripped is the BMS protecting itself; charge FET
   on with zero current is the charger finishing.
-- Diagnostics that dump the last raw TX/RX frames and the decoded state.
+- Self-heating status and BMS warnings (advisory flags, with the list as an attribute).
+- **Restart BMS** button and `restart_bms` service — the app's "Reboot system", for clearing a
+  latched protection such as cell overvoltage after a full charge (JBD packs; **unverified
+  against hardware until the first field test**, see docs/TESTPLAN.md phase D).
+- **BMS event log**: the BMS's own fault/event records (JBD 0x07/0x08) with timestamps anchored
+  to wall-clock via the BMS clock (0x06). Exposed as *BMS log entries* and *Last BMS event*
+  (full record as attributes), as `ha_ble_wattcycle_bms_event` events that appear in the
+  device's logbook, and in full in diagnostics. Read path only; unverified against hardware
+  until the first field test.
+- Diagnostics that dump the last raw TX/RX frames, the last write acknowledgement, the event
+  log and the decoded state.
 - `send_raw` service for continued protocol exploration.
 - Optional HiLink auth handshake for WATT modules that gate the data path.
 

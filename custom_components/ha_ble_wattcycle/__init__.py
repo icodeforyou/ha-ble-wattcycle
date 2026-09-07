@@ -25,12 +25,13 @@ from .const import (
     DEFAULT_QUIET_LOGGING,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    SERVICE_RESTART_BMS,
     SERVICE_SEND_RAW,
 )
 from .coordinator import WattCycleConnection, WattCycleCoordinator
 from .protocol import DeviceType
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.BUTTON]
 
 type WattCycleConfigEntry = ConfigEntry[WattCycleCoordinator]
 
@@ -70,6 +71,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: WattCycleConfigEntry) -
         await entry.runtime_data.async_shutdown()
     if not hass.config_entries.async_loaded_entries(DOMAIN):
         hass.services.async_remove(DOMAIN, SERVICE_SEND_RAW)
+        hass.services.async_remove(DOMAIN, SERVICE_RESTART_BMS)
     return unloaded
 
 
@@ -105,4 +107,21 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 vol.Required(ATTR_DATA): cv.string,
             }
         ),
+    )
+
+    async def _handle_restart_bms(call: ServiceCall) -> None:
+        # Local import: button.py imports WattCycleConfigEntry from this module.
+        from .button import async_restart_bms
+
+        entry_id: str = call.data["entry_id"]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None or entry.domain != DOMAIN:
+            raise HomeAssistantError(f"Unknown WattCycle config entry: {entry_id}")
+        await async_restart_bms(entry.runtime_data)
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESTART_BMS,
+        _handle_restart_bms,
+        schema=vol.Schema({vol.Required("entry_id"): cv.string}),
     )

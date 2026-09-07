@@ -34,6 +34,14 @@ async def async_get_config_entry_diagnostics(
             "firmware_version": connection.firmware_version,
             "last_tx_frames": connection.last_tx,
             "last_rx_frames": connection.last_rx,
+            "last_ack": (
+                {
+                    "command": f"0x{connection.last_ack.command:02x}",
+                    "status": connection.last_ack.error,
+                }
+                if connection.last_ack
+                else None
+            ),
         },
         "advertisement": {
             "rssi": service_info.rssi if service_info else None,
@@ -44,4 +52,24 @@ async def async_get_config_entry_diagnostics(
             ),
         },
         "state": asdict(coordinator.data) if coordinator.data else None,
+        "event_log": {
+            "count": connection.event_count,
+            "bms_time": connection.bms_time,
+            "bms_time_read_at": (
+                connection.bms_time_read_at.isoformat() if connection.bms_time_read_at else None
+            ),
+            "records": [
+                {
+                    **asdict(rec),
+                    "event_time": (
+                        connection.event_time(rec).isoformat()
+                        if connection.event_time(rec)
+                        else None
+                    ),
+                    "protections": rec.active_protections,
+                    "warnings": rec.active_warnings,
+                }
+                for rec in connection.events
+            ],
+        },
     }

@@ -30,6 +30,13 @@ POLL_TIMEOUT: Final = 55.0  # hard cap per update so first refresh can't stall H
 
 # Services
 SERVICE_SEND_RAW: Final = "send_raw"
+SERVICE_RESTART_BMS: Final = "restart_bms"
 ATTR_DATA: Final = "data"
+# Seconds to wait after a BMS restart ack before polling again.
+RESTART_REFRESH_DELAY: Final = 8
+
+# BMS event log (JBD 0x07/0x08)
+MAX_EVENT_RECORDS: Final = 50  # cap per read; each record is one BLE round trip
+EVENT_BMS_EVENT: Final = f"{DOMAIN}_bms_event"
 
 MANUFACTURER: Final = "WattCycle (reverse-engineered)"

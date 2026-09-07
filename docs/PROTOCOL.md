@@ -352,8 +352,83 @@ Layouten är standard-JBD och överensstämmer med de fält vi redan verifierat 
 att bitarna faktiskt sätts vid ett skyddsutlöst tillstånd är **ännu inte observerat** — nästa
 fulladdning (cell 1 nådde 3.643 V 2026-09-07 innan laddningen upphörde) är testfallet.
 
-Kvar att kartlägga: extrafält efter NTC:erna (`0080 007aa8...` — trolig utökad JBD-variant),
-värmestyrning.
+### 10.1 WattCycle-tillägg i basinfo (verifierat mot appens `handleBasicInfoResponse`)
+
+Appen läser hela `0x03`-svaret så här (big-endian). Första 23 byte = standard-JBD; därefter
+en WattCycle-svans som vår 314Ah-modul faktiskt skickar (47 byte totalt):
+
+```
+[0:2]   totalspänning /100 V        [2:4]   ström i16 (se skala)     [4:6] kvarvarande Ah
+[6:8]   nominell Ah                 [8:10]  cykler                   [10:12] tillverkningsdatum
+[12:14] balansering cell 1–16       [14:16] balansering cell 17–32   [16:18] SKYDD (bitfält)
+[18]    mjukvaruversion (0x35→"3.5")[19]    RSOC %                   [20]    FET/status (bitar)
+[21]    antal celler                [22]    antal NTC                [23..]  NTC u16 (raw−2731)/10
+--- efter NTC:erna ---
+u8  luftfuktighet   u16 VARNING (bitfält)   u16 full kapacitet   u16 faktisk kvarvarande
+i16 balansström /1000 A   u16 aktiv-balansstatus   u8 protokollversion (0x19→"2.5")
+u16 reserverad      u16 BMS-status (bitfält)
+```
+
+**Skala:** FET-byte bit 7 (`0x80`) = "100 mA-enhet": ström, kvarvarande och nominell kapacitet
+delas då med 10 i stället för 100. Vår modul har biten nollställd (10 mA/10 mAh-enheter).
+
+**Skyddsbitar [16:18]** (ordning ur `JbdProtectionStatus`): 0 cell-OV, 1 cell-UV, 2 pack-OV,
+3 pack-UV, 4 ladd-övertemp, 5 ladd-undertemp, 6 urladd-övertemp, 7 urladd-undertemp,
+8 ladd-överström, 9 urladd-överström, 10 kortslutning, 11 front-end/IC-fel, 12 manuell MOS av,
+13 ladd-MOS trasig, 14 urladd-MOS trasig, 15 MOS-övertemp.
+**Fältverifierat 2026-09-07:** bit 0 sattes när cell 1 nådde 3.643 V, ladd-FET gick av.
+
+**FET/status-byte [20]** (ur `JbdFetStatus`): bit 0 ladd-MOS på, 1 urladd-MOS på,
+2 för-urladdning, 3 värmeindikator, 4 värme PÅ, 5 forcerad urladdning, 6 fabriksläge,
+7 100 mA-enhet.
+
+**Varningsbitar** (ur `JbdWarningStatus`, rådgivande — öppnar inte FET): 0 cell hög V,
+1 cell låg V, 2 pack hög V, 3 pack låg V, 4 ladd hög temp, 5 ladd låg temp, 6 urladd hög temp,
+7 urladd låg temp, 8 ladd-överström, 9 urladd-överström, 10 cellspänningsdiff, 11 låg kapacitet,
+12 frånkoppling, 13 värme-MOS trasig. Bit 15 är alltid satt på vår modul (okänd betydelse,
+maskas bort). Observerat `0x8001` = cell-hög-V-varning samtidigt med cell-OVP-skydd.
+
+**BMS-status** (ur `JbdBmsStatus`, fältnamn i alfabetisk ordning — bitordning ej utläst):
+chargerConnected, currentLimitState, energyRecovery, heatingState, inCabinet, inactive,
+loadConnected, manualChargeOff, manualDischargeOff, peripheralPower, relayOn. Ej avkodat ännu.
+
+### 10.2 WattCycle-specifika JBD-kommandon (ur `JbdBleProtocolHandler`)
+
+Skrivram: `DD 5A <cmd> <len> <data> <chk u16 BE> 77`, chk = `-(cmd + len + Σdata) & 0xFFFF`.
+Svar: `DD <cmd> <status> <len> <data> <chk> 77`; status 0 = OK, 0x80 kommando finns ej,
+0x81 ogiltig operation, 0x82 checksumfel, 0x83 fel lösenord. Inget lösenord/fabriksläge krävs
+i appen.
+
+| cmd  | Riktning | Data | Betydelse | Status i integrationen |
+|------|----------|------|-----------|------------------------|
+| 0x06 | läs | → u32 BE | BMS-klocka i sekunder (epok okänd: Unix om appen ställt den, annars troligen sedan start) | läses varje poll (v0.3.0) — används för att åldersbestämma loggposter och upptäcka omstart (klockan går bakåt) |
+| 0x07 | läs | → u32 BE | antal loggposter (nollställer troligen läscursorn — **verifiera**) | läses varje poll (v0.3.0) |
+| 0x08 | läs | → post | nästa loggpost via BMS:ens cursor (appen: nollställ lista → 0x07 → 0x08 × antal) | läses när antalet ändras eller BMS:en startat om, max 50 (v0.3.0) |
+| 0x0A | skriv | `18 81` | **återställ fabriksinställningar — skicka ALDRIG** | avsiktligt ej exponerat |
+| 0x0E | skriv | `81 18` | mjuk omstart av BMS ("Reboot system") → `DD 5A 0E 02 81 18 FF 57 77` | knapp + tjänst `restart_bms` (v0.3.0), **overifierat mot hårdvara** |
+| 0xFB | skriv | `<mål> <värde>` | MOS-styrning: mål 1 = ladd, 0 = urladd; värde 1 = AV, 0 = PÅ | ej exponerat (urladd-av kopplar bort bodelen) |
+| 0xFD | skriv | `<1 på/2 av> <h> <min> <start °C> <stopp °C>` | värmestyrning | ej exponerat |
+
+**Loggpost (0x08, `parseFaultRecord`, big-endian, fältordning ur `JbdFaultRecord`-konstruktorn):**
+```
+u8   ladd/urladd-tillstånd (kod, betydelse overifierad)
+5B   timestamp (BMS-sekunder)
+u16  pack-V /100        i16 ström /100        u16 kvarvarande /100    u16 nominell /100
+u16  skyddsbitar        u16 varningsbitar
+u16×4 temp (raw−2731)/10: max cell, min cell, omgivning, kärna
+u16  max cell-V /1000   u16 min cell-V /1000  u8 idx max  u8 idx min
+u8   FET-status         u8 versionsflagga     u8 reserv   u8 antal celler
+u16×N cellspänningar /1000
+--- valfri svans ---
+u8 grupp-id  u8 RSOC  u16 BMS-status  u16 cykler  u8.u8 mjukvaruversion  u16  u16
+```
+Integrationen (v0.3.0) exponerar loggen som sensorerna *BMS-loggposter* och *Senaste BMS-händelse*
+(tidsstämpel + hela posten som attribut), eldar HA-eventet `ha_ble_wattcycle_bms_event` för varje
+ny post (syns i Loggboken på enhetssidan) och dumpar alla poster i diagnostiken. Tidsstämplarna
+omräknas till väggklocka som `lästidpunkt − (BMS-klocka − post.timestamp)`, oberoende av epok.
+**Ej fältverifierat:** att 0x07/0x08 svarar alls, cursorbeteendet, epok, postlängd.
+
+Kvar att kartlägga: BMS-status-bitordning, systemtidens epok, loggformat mot verklig data, tillståndskoden i loggposternas första byte.
 
 ### Ursprungliga valideringsmål (datablad)
 

@@ -220,3 +220,113 @@ def test_jbd_basic_info_short_payload_leaves_status_none():
     assert state.balance_status is None
     assert state.active_protections == []
     assert state.protection_active("cell_overvoltage") is None
+
+
+def test_jbd_write_frame_matches_app_restart():
+    # WattCycle app: buildWriteFrame(14, [0x81, 0x18]) -> DD 5A 0E 02 81 18 FF 57 77
+    assert p.jbd_build_restart_frame() == bytes.fromhex("dd5a0e028118ff5777")
+
+
+def test_jbd_write_frame_checksum_general():
+    # controlMos(charge, on): -(0xFB + 2 + 1 + 0) & 0xFFFF
+    frame = p.jbd_build_write_frame(p.JBD_CMD_CONTROL_MOS, bytes([1, 0]))
+    assert frame[:4] == bytes([0xDD, 0x5A, 0xFB, 0x02])
+    assert frame[4:6] == bytes([1, 0])
+    assert struct.unpack(">H", frame[6:8])[0] == (-(0xFB + 2 + 1)) & 0xFFFF
+    assert frame[-1] == 0x77
+
+
+def test_jbd_ack_helpers():
+    assert p.JbdAck(0x0E, 0).ok
+    assert p.JbdAck(0x0E, 0).error == "ok"
+    assert p.JbdAck(0x0E, 0x80).error == "command not supported"
+    assert p.JbdAck(0x0E, 0x83).error == "password mismatch"
+    assert p.JbdAck(0x0E, 0x7F).error == "status 0x7f"
+
+
+def test_jbd_basic_info_real_frame_discover_314ah():
+    # Captured 2026-09-07 with cell OVP latched (payload of dd03002f...f72d77).
+    payload = bytes.fromhex(
+        "054000007aa77aa8000334ac00000000000135640204040b630b5c0b5a0b73"
+        "0080017aa87aa7000000001900000000"
+    )
+    s = p.jbd_parse_basic_info(payload)
+    assert s.voltage == 13.44
+    assert s.current == 0.0
+    assert s.remaining_capacity == 313.99
+    assert s.total_capacity == 314.0
+    assert s.cycles == 3
+    assert s.firmware_version == 0x35
+    assert s.soc == 100
+    assert s.cell_count == 4
+    assert s.cell_temperatures == [18.4, 17.7, 17.5, 20.0]
+    assert s.protection_status == 1
+    assert s.active_protections == ["cell_overvoltage"]
+    assert s.charge_fet_on is False
+    assert s.discharge_fet_on is True
+    assert s.heating_on is False
+    assert s.warning_status == 0x8001
+    assert s.active_warnings == ["cell_high_voltage"]
+    assert s.balance_current == 0.0
+    assert s.protocol_version == "2.5"
+
+
+def test_jbd_basic_info_100ma_unit_flag_rescales():
+    payload = bytearray(_jbd_basic_info(fet=0x83))  # bit 7 set: 100 mA units
+    s = p.jbd_parse_basic_info(bytes(payload))
+    assert s.remaining_capacity == 1611.5  # 16115 / 10
+    assert s.total_capacity == 3140.0
+    assert s.charge_fet_on and s.discharge_fet_on
+
+
+def test_jbd_extended_protection_bits():
+    s = p.jbd_parse_basic_info(_jbd_basic_info(protection=(1 << 13) | (1 << 15)))
+    assert s.active_protections == ["charge_mos_broken", "mos_overtemperature"]
+
+
+def _fault_record(ts=123456, prot=0x0001, warn=0x0001, fet=0x02, cells=(3643, 3436, 3436, 3436), tail=True):
+    body = bytes([0x01]) + ts.to_bytes(5, "big")
+    body += struct.pack(">HhHHHH", 1395, 698, 30930, 31400, prot, warn)
+    body += struct.pack(">HHHH", 2731 + 244, 2731 + 199, 2731 + 198, 2731 + 310)
+    body += struct.pack(">HH", max(cells), min(cells))
+    body += bytes([cells.index(max(cells)) + 1, cells.index(min(cells)) + 1, fet, 0, 0, len(cells)])
+    body += b"".join(struct.pack(">H", c) for c in cells)
+    if tail:
+        body += bytes([0, 99]) + struct.pack(">HH", 0, 3) + bytes([3, 5]) + struct.pack(">HH", 0, 0)
+    return body
+
+
+def test_jbd_fault_record_full():
+    rec = p.jbd_parse_fault_record(_fault_record())
+    assert rec is not None
+    assert rec.timestamp == 123456
+    assert rec.voltage == 13.95 and rec.current == 6.98
+    assert rec.remaining_capacity == 309.3 and rec.nominal_capacity == 314.0
+    assert rec.active_protections == ["cell_overvoltage"]
+    assert rec.active_warnings == ["cell_high_voltage"]
+    assert rec.max_cell_temperature == 24.4 and rec.core_temperature == 31.0
+    assert rec.max_cell_voltage == 3.643 and rec.max_cell_index == 1
+    assert rec.min_cell_voltage == 3.436 and rec.min_cell_index == 2
+    assert rec.charge_fet_on is False and rec.discharge_fet_on is True
+    assert rec.cell_voltages == [3.643, 3.436, 3.436, 3.436]
+    assert rec.soc == 99 and rec.cycles == 3 and rec.software_version == "3.5"
+    assert "cell overvoltage" in rec.summary() and "3.643" in rec.summary()
+
+
+def test_jbd_fault_record_without_tail_and_too_short():
+    rec = p.jbd_parse_fault_record(_fault_record(tail=False))
+    assert rec is not None and rec.soc is None and rec.cycles is None
+    assert p.jbd_parse_fault_record(_fault_record()[:20]) is None
+
+
+def test_jbd_fault_record_key_and_no_flags_summary():
+    a = p.jbd_parse_fault_record(_fault_record(prot=0, warn=0))
+    b = p.jbd_parse_fault_record(_fault_record(prot=0, warn=0))
+    assert a.key == b.key
+    assert a.summary().startswith("no flags")
+
+
+def test_jbd_parse_u32():
+    assert p.jbd_parse_u32(bytes.fromhex("00000007")) == 7
+    assert p.jbd_parse_u32(bytes.fromhex("68bd1c40")) == 0x68BD1C40
+    assert p.jbd_parse_u32(b"\x00\x01") is None

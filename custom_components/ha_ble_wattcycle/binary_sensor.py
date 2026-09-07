@@ -83,6 +83,22 @@ BINARY_SENSORS: tuple[WattCycleBinaryDescription, ...] = (
         exists_fn=lambda s: s.balance_status is not None,
         attributes_fn=lambda s: {"cells": s.balancing_cells},
     ),
+    WattCycleBinaryDescription(
+        key="heating",
+        translation_key="heating",
+        device_class=BinarySensorDeviceClass.HEAT,
+        value_fn=lambda s: s.heating_on,
+        exists_fn=lambda s: s.heating_on is not None,
+    ),
+    # --- JBD status: advisory warnings (do not open the FETs). Bits 14-15 are undefined in
+    # the app and bit 15 is permanently set on the DISCOVER 314Ah, so they are masked out.
+    WattCycleBinaryDescription(
+        key="warning",
+        translation_key="warning",
+        value_fn=lambda s: bool(s.warning_status & 0x3FFF) if s.warning_status is not None else None,
+        exists_fn=lambda s: s.warning_status is not None,
+        attributes_fn=lambda s: {"active": s.active_warnings, "raw": s.warning_status},
+    ),
     # --- JBD status: any protection tripped -------------------------------------------
     WattCycleBinaryDescription(
         # Deliberately no PROBLEM device class: a tripped protection is the BMS doing its

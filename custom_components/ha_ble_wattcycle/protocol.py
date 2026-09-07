@@ -76,9 +76,31 @@ JBD_READ = 0xA5
 JBD_WRITE = 0x5A
 JBD_CMD_BASIC_INFO = 0x03
 JBD_CMD_CELL_VOLTAGES = 0x04
+# WattCycle-specific JBD commands, from the app's JbdBleProtocolHandler. None of them need a
+# password or factory mode. Only restart is exposed by this integration; the others are
+# documented so nobody has to rediscover them, and deliberately NOT wired to entities.
+JBD_CMD_SYSTEM_TIME = 0x06  # read: u32 BE timestamp
+JBD_CMD_RECORD_TOTAL = 0x07  # read: u32 BE number of fault records
+JBD_CMD_RECORD_CURRENT = 0x08  # read: next fault record (see docs/PROTOCOL.md)
+JBD_CMD_RESTORE_DEFAULTS = 0x0A  # write [0x18, 0x81] — DESTRUCTIVE, never send
+JBD_CMD_RESTART_SYSTEM = 0x0E  # write [0x81, 0x18] — soft-reboots the BMS
+JBD_CMD_CONTROL_MOS = 0xFB  # write [target 1=charge/0=discharge, 1=off/0=on]
+JBD_CMD_CONTROL_HEATING = 0xFD  # write [1=on/2=off, delay h, delay min, start °C, stop °C]
 
-# JBD basic-info protection bitfield (payload bytes 16-17, big-endian). Standard
-# Xiaoxiang layout; bits 13-15 are reserved. Key -> bit index.
+JBD_RESTART_PAYLOAD = bytes([0x81, 0x18])
+
+# JBD response status byte (frame[2]) for write commands.
+JBD_STATUS_OK = 0x00
+JBD_ERRORS: dict[int, str] = {
+    0x80: "command not supported",
+    0x81: "invalid operation",
+    0x82: "checksum error",
+    0x83: "password mismatch",
+}
+
+# JBD basic-info protection bitfield (payload bytes 16-17, big-endian). Bit order taken
+# from the app's JbdProtectionStatus constructor; bits 0-12 match the public Xiaoxiang
+# layout, 13-15 are WattCycle additions. Key -> bit index.
 JBD_PROTECTION_BITS: dict[str, int] = {
     "cell_overvoltage": 0,
     "cell_undervoltage": 1,
@@ -93,11 +115,39 @@ JBD_PROTECTION_BITS: dict[str, int] = {
     "short_circuit": 10,
     "ic_error": 11,
     "mos_software_lock": 12,
+    "charge_mos_broken": 13,
+    "discharge_mos_broken": 14,
+    "mos_overtemperature": 15,
 }
 
-# JBD basic-info FET control byte (payload byte 20).
+# JBD basic-info FET/status byte (payload byte 20), bit order from the app's JbdFetStatus.
 JBD_FET_CHARGE = 0x01
 JBD_FET_DISCHARGE = 0x02
+JBD_FET_PREDISCHARGE = 0x04
+JBD_FET_HEATING_INDICATOR = 0x08
+JBD_FET_HEATING_ON = 0x10
+JBD_FET_FORCED_DISCHARGE = 0x20
+JBD_FET_FACTORY_MODE = 0x40
+JBD_FET_CURRENT_UNIT_100MA = 0x80  # when set, current/capacity are in 100 mA / 100 mAh units
+
+# Warning bitfield (payload byte after NTCs + 1, u16 BE) — advisory, does not open FETs.
+# Bit order from the app's JbdWarningStatus constructor.
+JBD_WARNING_BITS: dict[str, int] = {
+    "cell_high_voltage": 0,
+    "cell_low_voltage": 1,
+    "pack_high_voltage": 2,
+    "pack_low_voltage": 3,
+    "charge_high_temperature": 4,
+    "charge_low_temperature": 5,
+    "discharge_high_temperature": 6,
+    "discharge_low_temperature": 7,
+    "charge_overcurrent": 8,
+    "discharge_overcurrent": 9,
+    "cell_voltage_difference": 10,
+    "low_capacity": 11,
+    "disconnection": 12,
+    "heating_mos_broken": 13,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +325,10 @@ class BatteryState:
     charge_fet_on: bool | None = None
     discharge_fet_on: bool | None = None
     balance_status: int | None = None  # raw 32-bit bitfield, bit n = cell n+1 balancing
+    fet_status: int | None = None  # raw byte 20, see JBD_FET_* bits
+    heating_on: bool | None = None
+    warning_status: int | None = None  # raw 16-bit bitfield, see JBD_WARNING_BITS
+    protocol_version: str | None = None  # e.g. "2.5"
 
     def protection_active(self, key: str) -> bool | None:
         """True if the named JBD protection is currently tripped."""
@@ -288,6 +342,13 @@ class BatteryState:
         if not self.protection_status:
             return []
         return [k for k, bit in JBD_PROTECTION_BITS.items() if self.protection_status >> bit & 1]
+
+    @property
+    def active_warnings(self) -> list[str]:
+        """Names of all currently raised warnings (empty when none or unknown)."""
+        if not self.warning_status:
+            return []
+        return [k for k, bit in JBD_WARNING_BITS.items() if self.warning_status >> bit & 1]
 
     @property
     def balancing_cells(self) -> list[int]:
@@ -392,10 +453,14 @@ def jbd_build_read_frame(command: int) -> bytes:
 def jbd_parse_basic_info(payload: bytes) -> BatteryState:
     """Decode a JBD 0x03 basic-info payload (standard layout)."""
     state = BatteryState()
+    # Byte 20 bit 7 switches current/capacity units from 10 mA(h) to 100 mA(h); the app
+    # applies the same scale to remaining and nominal capacity.
+    fet = payload[20] if len(payload) > 20 else 0
+    scale = 10.0 if fet & JBD_FET_CURRENT_UNIT_100MA else 100.0
     state.voltage = round(struct.unpack(">H", payload[0:2])[0] / 100.0, 2)  # 10 mV units
-    state.current = round(struct.unpack(">h", payload[2:4])[0] / 100.0, 2)  # signed, 10 mA
-    state.remaining_capacity = round(struct.unpack(">H", payload[4:6])[0] / 100.0, 2)
-    state.total_capacity = round(struct.unpack(">H", payload[6:8])[0] / 100.0, 2)
+    state.current = round(struct.unpack(">h", payload[2:4])[0] / scale, 2)  # signed
+    state.remaining_capacity = round(struct.unpack(">H", payload[4:6])[0] / scale, 2)
+    state.total_capacity = round(struct.unpack(">H", payload[6:8])[0] / scale, 2)
     state.cycles = struct.unpack(">H", payload[8:10])[0]
     # [10:12] production date, [12:14] balance status cells 1-16, [14:16] cells 17-32,
     # [16:18] protection bitfield, [18] software version, [19] RSOC, [20] FET control,
@@ -410,10 +475,25 @@ def jbd_parse_basic_info(payload: bytes) -> BatteryState:
     ntc_count = payload[22] if len(payload) > 22 else 0
     state.soc = payload[19] if len(payload) > 19 else None
     if len(payload) > 20:
-        state.charge_fet_on = bool(payload[20] & JBD_FET_CHARGE)
-        state.discharge_fet_on = bool(payload[20] & JBD_FET_DISCHARGE)
+        state.fet_status = fet
+        state.charge_fet_on = bool(fet & JBD_FET_CHARGE)
+        state.discharge_fet_on = bool(fet & JBD_FET_DISCHARGE)
+        state.heating_on = bool(fet & JBD_FET_HEATING_ON)
     if len(payload) > 21:
         state.cell_count = payload[21]
+    # WattCycle extension after the NTC block (layout from the app's handleBasicInfoResponse):
+    # u8 humidity, u16 warning bits, u16 full capacity, u16 actual remaining, i16 balance
+    # current (mA), u16 active-balance status, u8 protocol version, u16 reserved, u16 BMS status.
+    extra = 23 + ntc_count * 2
+    if len(payload) >= extra + 3:
+        state.warning_status = struct.unpack(">H", payload[extra + 1 : extra + 3])[0]
+    if len(payload) >= extra + 9:
+        state.balance_current = round(
+            struct.unpack(">h", payload[extra + 7 : extra + 9])[0] / 1000.0, 3
+        )
+    if len(payload) >= extra + 12:
+        raw = payload[extra + 11]
+        state.protocol_version = f"{raw // 10}.{raw % 10}"
     temps = []
     for i in range(ntc_count):
         base = 23 + i * 2
@@ -422,6 +502,161 @@ def jbd_parse_basic_info(payload: bytes) -> BatteryState:
             temps.append(round((raw - 2731) / 10.0, 1))
     state.cell_temperatures = temps
     return state
+
+
+def jbd_build_write_frame(command: int, data: bytes) -> bytes:
+    """Build a JBD write frame: DD 5A <cmd> <len> <data> <chk_hi> <chk_lo> 77.
+
+    Checksum is the app's calculateRequestChecksum: -(cmd + len + sum(data)) & 0xFFFF.
+    """
+    body = bytes([command & 0xFF, len(data)]) + data
+    checksum = (-sum(body)) & 0xFFFF
+    return bytes([JBD_START, JBD_WRITE]) + body + struct.pack(">H", checksum) + bytes([JBD_END])
+
+
+def jbd_build_restart_frame() -> bytes:
+    """The frame behind the WattCycle app's 'Reboot system' button."""
+    return jbd_build_write_frame(JBD_CMD_RESTART_SYSTEM, JBD_RESTART_PAYLOAD)
+
+
+@dataclass(frozen=True)
+class JbdAck:
+    """Response to a JBD write (or a read the BMS rejected)."""
+
+    command: int
+    status: int
+
+    @property
+    def ok(self) -> bool:
+        return self.status == JBD_STATUS_OK
+
+    @property
+    def error(self) -> str:
+        if self.ok:
+            return "ok"
+        return JBD_ERRORS.get(self.status, f"status 0x{self.status:02x}")
+
+
+def jbd_parse_u32(payload: bytes) -> int | None:
+    """Decode a u32 BE payload (0x06 system time, 0x07 record count)."""
+    if len(payload) < 4:
+        return None
+    return struct.unpack(">I", payload[0:4])[0]
+
+
+@dataclass
+class FaultRecord:
+    """One entry of the BMS event log (JBD 0x08), layout from the app's parseFaultRecord.
+
+    `timestamp` is the BMS's own clock in seconds. Its epoch is unknown: it may be Unix time
+    if the app ever set it, or seconds since the BMS last booted if not. Callers should
+    anchor it against the BMS's current time (0x06) rather than trust it as wall-clock.
+    """
+
+    state: int  # charge/discharge state code (meaning unverified)
+    timestamp: int  # BMS seconds, 40-bit
+    voltage: float
+    current: float
+    remaining_capacity: float
+    nominal_capacity: float
+    protection_status: int
+    warning_status: int
+    max_cell_temperature: float
+    min_cell_temperature: float
+    ambient_temperature: float
+    core_temperature: float
+    max_cell_voltage: float
+    min_cell_voltage: float
+    max_cell_index: int
+    min_cell_index: int
+    fet_status: int
+    cell_voltages: list[float] = field(default_factory=list)
+    soc: int | None = None
+    cycles: int | None = None
+    software_version: str | None = None
+
+    @property
+    def active_protections(self) -> list[str]:
+        return [k for k, bit in JBD_PROTECTION_BITS.items() if self.protection_status >> bit & 1]
+
+    @property
+    def active_warnings(self) -> list[str]:
+        return [k for k, bit in JBD_WARNING_BITS.items() if self.warning_status >> bit & 1]
+
+    @property
+    def charge_fet_on(self) -> bool:
+        return bool(self.fet_status & JBD_FET_CHARGE)
+
+    @property
+    def discharge_fet_on(self) -> bool:
+        return bool(self.fet_status & JBD_FET_DISCHARGE)
+
+    @property
+    def key(self) -> tuple[int, int, int]:
+        """Identity used to spot records already seen."""
+        return (self.timestamp, self.protection_status, self.warning_status)
+
+    def summary(self) -> str:
+        """Short human-readable description for logbook/notifications."""
+        parts = [k.replace("_", " ") for k in self.active_protections]
+        if not parts:
+            parts = [f"warning: {k.replace('_', ' ')}" for k in self.active_warnings]
+        if not parts:
+            parts = ["no flags"]
+        return (
+            f"{', '.join(parts)} — {self.voltage:.2f} V, {self.current:+.1f} A, "
+            f"cell max {self.max_cell_voltage:.3f} V (#{self.max_cell_index}), "
+            f"min {self.min_cell_voltage:.3f} V (#{self.min_cell_index})"
+        )
+
+
+def _temp(raw: int) -> float:
+    return round((raw - 2731) / 10.0, 1)
+
+
+def jbd_parse_fault_record(payload: bytes) -> FaultRecord | None:
+    """Decode one 0x08 record. Returns None if the payload is too short."""
+    if len(payload) < 36:
+        return None
+    ts = int.from_bytes(payload[1:6], "big")
+    (v, i, rem, nom, prot, warn, t1, t2, t3, t4, vmax, vmin) = struct.unpack(
+        ">HhHHHHHHHHHH", payload[6:30]
+    )
+    max_idx, min_idx, fet, _version_flag, _reserved, cell_count = payload[30:36]
+    cells: list[float] = []
+    pos = 36
+    for _ in range(cell_count):
+        if len(payload) >= pos + 2:
+            cells.append(round(struct.unpack(">H", payload[pos : pos + 2])[0] / 1000.0, 3))
+            pos += 2
+    rec = FaultRecord(
+        state=payload[0],
+        timestamp=ts,
+        voltage=round(v / 100.0, 2),
+        current=round(i / 100.0, 2),
+        remaining_capacity=round(rem / 100.0, 2),
+        nominal_capacity=round(nom / 100.0, 2),
+        protection_status=prot,
+        warning_status=warn,
+        max_cell_temperature=_temp(t1),
+        min_cell_temperature=_temp(t2),
+        ambient_temperature=_temp(t3),
+        core_temperature=_temp(t4),
+        max_cell_voltage=round(vmax / 1000.0, 3),
+        min_cell_voltage=round(vmin / 1000.0, 3),
+        max_cell_index=max_idx,
+        min_cell_index=min_idx,
+        fet_status=fet,
+        cell_voltages=cells,
+    )
+    # Optional tail: u8 group id, u8 RSOC, u16 BMS status, u16 cycles, u8.u8 sw version, ...
+    if len(payload) >= pos + 2:
+        rec.soc = payload[pos + 1]
+    if len(payload) >= pos + 6:
+        rec.cycles = struct.unpack(">H", payload[pos + 4 : pos + 6])[0]
+    if len(payload) >= pos + 8:
+        rec.software_version = f"{payload[pos + 6]}.{payload[pos + 7]}"
+    return rec
 
 
 def jbd_parse_cell_voltages(payload: bytes) -> list[float]:

@@ -18,6 +18,7 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTemperature,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -188,6 +189,9 @@ async def async_setup_entry(
         WattCycleTempSensor(coordinator, index)
         for index in range(len(state.cell_temperatures))
     )
+    if coordinator.connection.event_count is not None:
+        entities.append(WattCycleEventCountSensor(coordinator))
+        entities.append(WattCycleLastEventSensor(coordinator))
     async_add_entities(entities)
 
 
@@ -245,3 +249,77 @@ class WattCycleTempSensor(WattCycleEntity, SensorEntity):
     def native_value(self) -> float | None:
         temps = self.coordinator.data.cell_temperatures
         return temps[self._index] if self._index < len(temps) else None
+
+
+class WattCycleEventCountSensor(WattCycleEntity, SensorEntity):
+    """Number of entries in the BMS event log (JBD 0x07)."""
+
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:format-list-numbered"
+
+    def __init__(self, coordinator: WattCycleCoordinator) -> None:
+        super().__init__(coordinator, "bms_event_count")
+        self._attr_translation_key = "bms_event_count"
+
+    @property
+    def native_value(self) -> int | None:
+        return self.coordinator.connection.event_count
+
+
+class WattCycleLastEventSensor(WattCycleEntity, SensorEntity):
+    """The most recent BMS event-log record.
+
+    State is the record's wall-clock time, derived from its BMS timestamp and the BMS clock
+    at read time; the record itself (flags, voltages, cells) is in the attributes.
+    """
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:history"
+
+    def __init__(self, coordinator: WattCycleCoordinator) -> None:
+        super().__init__(coordinator, "bms_last_event")
+        self._attr_translation_key = "bms_last_event"
+
+    def _latest(self):
+        events = self.coordinator.connection.events
+        if not events:
+            return None
+        return max(events, key=lambda r: r.timestamp)
+
+    @property
+    def native_value(self):
+        rec = self._latest()
+        if rec is None:
+            return None
+        return self.coordinator.connection.event_time(rec)
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        rec = self._latest()
+        if rec is None:
+            return None
+        conn = self.coordinator.connection
+        return {
+            "summary": rec.summary(),
+            "protections": rec.active_protections,
+            "warnings": rec.active_warnings,
+            "voltage": rec.voltage,
+            "current": rec.current,
+            "soc": rec.soc,
+            "remaining_capacity": rec.remaining_capacity,
+            "max_cell_voltage": rec.max_cell_voltage,
+            "max_cell_index": rec.max_cell_index,
+            "min_cell_voltage": rec.min_cell_voltage,
+            "min_cell_index": rec.min_cell_index,
+            "cell_voltages": rec.cell_voltages,
+            "max_cell_temperature": rec.max_cell_temperature,
+            "min_cell_temperature": rec.min_cell_temperature,
+            "core_temperature": rec.core_temperature,
+            "ambient_temperature": rec.ambient_temperature,
+            "charge_fet_on": rec.charge_fet_on,
+            "discharge_fet_on": rec.discharge_fet_on,
+            "bms_timestamp": rec.timestamp,
+            "bms_clock": conn.bms_time,
+            "records_total": conn.event_count,
+        }
