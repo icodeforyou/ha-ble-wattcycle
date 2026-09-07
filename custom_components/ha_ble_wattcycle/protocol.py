@@ -77,6 +77,28 @@ JBD_WRITE = 0x5A
 JBD_CMD_BASIC_INFO = 0x03
 JBD_CMD_CELL_VOLTAGES = 0x04
 
+# JBD basic-info protection bitfield (payload bytes 16-17, big-endian). Standard
+# Xiaoxiang layout; bits 13-15 are reserved. Key -> bit index.
+JBD_PROTECTION_BITS: dict[str, int] = {
+    "cell_overvoltage": 0,
+    "cell_undervoltage": 1,
+    "pack_overvoltage": 2,
+    "pack_undervoltage": 3,
+    "charge_overtemperature": 4,
+    "charge_undertemperature": 5,
+    "discharge_overtemperature": 6,
+    "discharge_undertemperature": 7,
+    "charge_overcurrent": 8,
+    "discharge_overcurrent": 9,
+    "short_circuit": 10,
+    "ic_error": 11,
+    "mos_software_lock": 12,
+}
+
+# JBD basic-info FET control byte (payload byte 20).
+JBD_FET_CHARGE = 0x01
+JBD_FET_DISCHARGE = 0x02
+
 
 # ---------------------------------------------------------------------------
 # Modbus CRC-16 (poly 0xA001, init 0xFFFF). WATT transmits it little-endian (§3.1).
@@ -238,7 +260,7 @@ class BatteryState:
     mos_temperature: float | None = None  # C
     pcb_temperature: float | None = None  # C
     cell_temperatures: list[float] = field(default_factory=list)  # C
-    current: float | None = None  # A (sign convention unverified — see docs)
+    current: float | None = None  # A, positive = charging (verified 2026-09-07 on DISCOVER 314Ah)
     voltage: float | None = None  # V (pack)
     remaining_capacity: float | None = None  # Ah
     total_capacity: float | None = None  # Ah
@@ -248,6 +270,31 @@ class BatteryState:
     soh: int | None = None  # %
     balance_current: float | None = None  # A
     firmware_version: int | None = None
+    # JBD-only status fields (None when the protocol does not provide them).
+    protection_status: int | None = None  # raw 16-bit bitfield, see JBD_PROTECTION_BITS
+    charge_fet_on: bool | None = None
+    discharge_fet_on: bool | None = None
+    balance_status: int | None = None  # raw 32-bit bitfield, bit n = cell n+1 balancing
+
+    def protection_active(self, key: str) -> bool | None:
+        """True if the named JBD protection is currently tripped."""
+        if self.protection_status is None:
+            return None
+        return bool(self.protection_status >> JBD_PROTECTION_BITS[key] & 1)
+
+    @property
+    def active_protections(self) -> list[str]:
+        """Names of all currently tripped protections (empty when none or unknown)."""
+        if not self.protection_status:
+            return []
+        return [k for k, bit in JBD_PROTECTION_BITS.items() if self.protection_status >> bit & 1]
+
+    @property
+    def balancing_cells(self) -> list[int]:
+        """1-based indexes of cells the BMS is currently balancing."""
+        if not self.balance_status:
+            return []
+        return [i + 1 for i in range(32) if self.balance_status >> i & 1]
 
     @property
     def min_cell_voltage(self) -> float | None:
@@ -350,8 +397,23 @@ def jbd_parse_basic_info(payload: bytes) -> BatteryState:
     state.remaining_capacity = round(struct.unpack(">H", payload[4:6])[0] / 100.0, 2)
     state.total_capacity = round(struct.unpack(">H", payload[6:8])[0] / 100.0, 2)
     state.cycles = struct.unpack(">H", payload[8:10])[0]
+    # [10:12] production date, [12:14] balance status cells 1-16, [14:16] cells 17-32,
+    # [16:18] protection bitfield, [18] software version, [19] RSOC, [20] FET control,
+    # [21] cell count, [22] NTC count, [23..] NTC values.
+    if len(payload) >= 16:
+        low, high = struct.unpack(">HH", payload[12:16])
+        state.balance_status = low | (high << 16)
+    if len(payload) >= 18:
+        state.protection_status = struct.unpack(">H", payload[16:18])[0]
+    if len(payload) > 18:
+        state.firmware_version = payload[18]
     ntc_count = payload[22] if len(payload) > 22 else 0
     state.soc = payload[19] if len(payload) > 19 else None
+    if len(payload) > 20:
+        state.charge_fet_on = bool(payload[20] & JBD_FET_CHARGE)
+        state.discharge_fet_on = bool(payload[20] & JBD_FET_DISCHARGE)
+    if len(payload) > 21:
+        state.cell_count = payload[21]
     temps = []
     for i in range(ntc_count):
         base = 23 + i * 2

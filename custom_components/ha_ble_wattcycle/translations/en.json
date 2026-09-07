@@ -99,6 +99,57 @@
       },
       "discharging": {
         "name": "Discharging"
+      },
+      "charge_fet": {
+        "name": "Charge MOSFET"
+      },
+      "discharge_fet": {
+        "name": "Discharge MOSFET"
+      },
+      "balancing": {
+        "name": "Balancing"
+      },
+      "protection": {
+        "name": "Protection active"
+      },
+      "protection_cell_overvoltage": {
+        "name": "Cell overvoltage protection"
+      },
+      "protection_cell_undervoltage": {
+        "name": "Cell undervoltage protection"
+      },
+      "protection_pack_overvoltage": {
+        "name": "Pack overvoltage protection"
+      },
+      "protection_pack_undervoltage": {
+        "name": "Pack undervoltage protection"
+      },
+      "protection_charge_overtemperature": {
+        "name": "Charge over-temperature protection"
+      },
+      "protection_charge_undertemperature": {
+        "name": "Charge under-temperature protection"
+      },
+      "protection_discharge_overtemperature": {
+        "name": "Discharge over-temperature protection"
+      },
+      "protection_discharge_undertemperature": {
+        "name": "Discharge under-temperature protection"
+      },
+      "protection_charge_overcurrent": {
+        "name": "Charge overcurrent protection"
+      },
+      "protection_discharge_overcurrent": {
+        "name": "Discharge overcurrent protection"
+      },
+      "protection_short_circuit": {
+        "name": "Short-circuit protection"
+      },
+      "protection_ic_error": {
+        "name": "BMS IC error"
+      },
+      "protection_mos_software_lock": {
+        "name": "MOSFET software lock"
       }
     }
   },

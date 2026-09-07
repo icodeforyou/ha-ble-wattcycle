@@ -99,6 +99,57 @@
       },
       "discharging": {
         "name": "Urladdar"
+      },
+      "charge_fet": {
+        "name": "Laddnings-MOSFET"
+      },
+      "discharge_fet": {
+        "name": "Urladdnings-MOSFET"
+      },
+      "balancing": {
+        "name": "Balanserar"
+      },
+      "protection": {
+        "name": "Skydd aktivt"
+      },
+      "protection_cell_overvoltage": {
+        "name": "Skydd cellöverspänning"
+      },
+      "protection_cell_undervoltage": {
+        "name": "Skydd cellunderspänning"
+      },
+      "protection_pack_overvoltage": {
+        "name": "Skydd packöverspänning"
+      },
+      "protection_pack_undervoltage": {
+        "name": "Skydd packunderspänning"
+      },
+      "protection_charge_overtemperature": {
+        "name": "Skydd övertemperatur laddning"
+      },
+      "protection_charge_undertemperature": {
+        "name": "Skydd undertemperatur laddning"
+      },
+      "protection_discharge_overtemperature": {
+        "name": "Skydd övertemperatur urladdning"
+      },
+      "protection_discharge_undertemperature": {
+        "name": "Skydd undertemperatur urladdning"
+      },
+      "protection_charge_overcurrent": {
+        "name": "Skydd överström laddning"
+      },
+      "protection_discharge_overcurrent": {
+        "name": "Skydd överström urladdning"
+      },
+      "protection_short_circuit": {
+        "name": "Skydd kortslutning"
+      },
+      "protection_ic_error": {
+        "name": "BMS IC-fel"
+      },
+      "protection_mos_software_lock": {
+        "name": "MOSFET mjukvarulås"
       }
     }
   },

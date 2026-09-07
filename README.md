@@ -9,8 +9,8 @@ JBD/Xiaoxiang-based packs) over Bluetooth Low Energy. Works through **ESPHome Bl
 
 ## Status
 
-- **Read path (telemetry): implemented, decoded from the app, verified in unit tests, but not
-  yet confirmed against real hardware.** Use `tools/probe.py` in the vehicle to confirm.
+- **Read path (telemetry): confirmed against a WattCycle DISCOVER 12V 314Ah** (which speaks the
+  JBD protocol over WattCycle's `fff0` GATT service). Current sign verified: positive = charging.
 - **Write path (`send_raw` service): unverified and dangerous.** A BMS can disconnect the
   battery, change protection parameters and balancing. See [docs/TESTPLAN.md](docs/TESTPLAN.md).
 
@@ -20,8 +20,13 @@ JBD/Xiaoxiang-based packs) over Bluetooth Low Energy. Works through **ESPHome Bl
 - A `DataUpdateCoordinator` that keeps one connection open and polls the analog-quantity register.
 - Sensors: pack voltage, current, power, SoC, SoH, remaining/total/design capacity, cycles,
   MOSFET/PCB temperature, per-cell voltages, min/max/delta cell voltage.
-- Binary sensors: charging / discharging (derived from current sign — **sign convention
-  unverified**, adjust after field testing).
+- Binary sensors: charging / discharging (from current sign, positive = charging), and on JBD
+  packs the BMS's own status: charge/discharge MOSFET state, active balancing (with the cell
+  list as an attribute), an overall *Protection active* flag and one diagnostic sensor per
+  protection (cell/pack over- and undervoltage, charge/discharge over- and under-temperature,
+  overcurrent, short circuit, IC error, MOSFET software lock). These tell you *why* a charge
+  stopped: charge FET off + cell overvoltage tripped is the BMS protecting itself; charge FET
+  on with zero current is the charger finishing.
 - Diagnostics that dump the last raw TX/RX frames and the decoded state.
 - `send_raw` service for continued protocol exploration.
 - Optional HiLink auth handshake for WATT modules that gate the data path.

@@ -338,10 +338,22 @@ Verifierade värden mot datablad/app (diagnostics-dump):
 - SoC 51 % (payload-byte 0x33) ✓; kvarvarande 161.15 Ah; **totalt 314.0 Ah** ✓ (datablad)
 - 3 cykler (nytt batteri) ✓; 4 NTC:er 18.1–20.0 °C (0x0Bxx → (raw−2731)/10) ✓
 - Exempelramar: TX `dd a5 03 00 ff fd 77` → RX `dd 03 00 2f 0526 0000 3ef3 7aa8 0003 ...`
-- Ström vid vila = 0.0 A ✓; **teckenkonvention vid laddning fortfarande overifierad**.
+- Ström vid vila = 0.0 A ✓; **teckenkonvention verifierad 2026-09-07: positiv ström = laddning**
+  (Ah-räknaren steg 197.7→309.3 Ah vid +12 A på landström).
 
-Kvar att kartlägga: FET-statusbyte [20] (0x03 = ladd+urladd på), skyddsbitfält [16:18],
-extrafält efter NTC:erna (`0080 007aa8...` — trolig utökad JBD-variant), värmestyrning.
+JBD-basinfo, statusfält (standard Xiaoxiang-layout, avkodas sedan v0.2.0):
+- `[12:14]` + `[14:16]` balanseringsstatus, bit n = cell n+1 balanserar (celler 1–16 resp. 17–32)
+- `[16:18]` skyddsbitfält: bit 0 cell-OV, 1 cell-UV, 2 pack-OV, 3 pack-UV, 4 ladd-övertemp,
+  5 ladd-undertemp, 6 urladd-övertemp, 7 urladd-undertemp, 8 ladd-överström, 9 urladd-överström,
+  10 kortslutning, 11 IC-fel, 12 MOS-mjukvarulås, 13–15 reserverade
+- `[18]` mjukvaruversion, `[19]` RSOC %, `[20]` FET-status (bit 0 ladd-FET, bit 1 urladd-FET;
+  0x03 = båda på), `[21]` antal celler, `[22]` antal NTC
+Layouten är standard-JBD och överensstämmer med de fält vi redan verifierat (RSOC, NTC-antal);
+att bitarna faktiskt sätts vid ett skyddsutlöst tillstånd är **ännu inte observerat** — nästa
+fulladdning (cell 1 nådde 3.643 V 2026-09-07 innan laddningen upphörde) är testfallet.
+
+Kvar att kartlägga: extrafält efter NTC:erna (`0080 007aa8...` — trolig utökad JBD-variant),
+värmestyrning.
 
 ### Ursprungliga valideringsmål (datablad)
 

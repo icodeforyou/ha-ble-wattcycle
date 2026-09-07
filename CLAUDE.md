@@ -65,13 +65,14 @@ python3 tools/probe.py --address <MAC> --once [--auth]
 
 - Keep `protocol.py` free of Home Assistant and bleak imports; add tests when changing it.
 - Values decoded from the app but not yet confirmed against hardware must be marked
-  **(unverified)** in code comments and docs — notably the **current sign convention**
-  (charge vs discharge) and advertisement telemetry scales.
+  **(unverified)** in code comments and docs — notably advertisement telemetry scales and the
+  JBD protection bits asserting on a real trip.
 - To cut a release: bump `version` in `manifest.json`, commit, push to `main`.
 
 ## Current status
 
-Read path decoded and unit-tested; **not yet confirmed against real hardware**. Pending field
-verification with `tools/probe.py`: telemetry vs app/meter, current sign, and whether HiLink is
-required. Passive advertisement telemetry (SoC/V/A without connecting) is documented but not yet
-implemented.
+Read path confirmed on a DISCOVER 12V 314Ah (JBD protocol over the `fff0` service, no HiLink
+needed). Current sign verified: positive = charging. v0.2.0 decodes the JBD status bytes
+(balance status, protection bitfield, FET state) into binary sensors; whether the protection
+bits actually assert on a real trip is still to be observed. Passive advertisement telemetry
+(SoC/V/A without connecting) is documented but not yet implemented.

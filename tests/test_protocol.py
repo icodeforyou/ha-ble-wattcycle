@@ -161,3 +161,62 @@ def test_detect_device_type():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def _jbd_basic_info(protection=0, fet=0x03, balance=0, ntc=(2731 + 200,)):
+    """Build a standard JBD 0x03 payload (bytes 0..22 + NTCs)."""
+    body = struct.pack(">HhHHH", 1318, 0, 16115, 31400, 3)  # V, A, remaining, total, cycles
+    body += struct.pack(">H", 0)  # production date
+    body += struct.pack(">HH", balance & 0xFFFF, balance >> 16)  # balance status lo/hi
+    body += struct.pack(">H", protection)
+    body += bytes([0x21, 51, fet, 4, len(ntc)])  # sw version, RSOC, FET, cells, NTC count
+    for raw in ntc:
+        body += struct.pack(">H", raw)
+    return body
+
+
+def test_jbd_basic_info_status_fields_idle():
+    state = p.jbd_parse_basic_info(_jbd_basic_info())
+    assert state.voltage == 13.18
+    assert state.total_capacity == 314.0
+    assert state.soc == 51
+    assert state.cell_count == 4
+    assert state.firmware_version == 0x21
+    assert state.charge_fet_on is True
+    assert state.discharge_fet_on is True
+    assert state.protection_status == 0
+    assert state.active_protections == []
+    assert state.balance_status == 0
+    assert state.balancing_cells == []
+    assert state.protection_active("cell_overvoltage") is False
+
+
+def test_jbd_basic_info_cell_ovp_trips_charge_fet():
+    # Cell OVP (bit 0) tripped, charge FET off, discharge FET on, cell 1 balancing.
+    state = p.jbd_parse_basic_info(_jbd_basic_info(protection=0x0001, fet=0x02, balance=0b0001))
+    assert state.charge_fet_on is False
+    assert state.discharge_fet_on is True
+    assert state.protection_active("cell_overvoltage") is True
+    assert state.protection_active("discharge_overcurrent") is False
+    assert state.active_protections == ["cell_overvoltage"]
+    assert state.balancing_cells == [1]
+
+
+def test_jbd_basic_info_multiple_protections_and_high_balance_bits():
+    prot = (1 << 5) | (1 << 9) | (1 << 12)
+    state = p.jbd_parse_basic_info(_jbd_basic_info(protection=prot, balance=(1 << 17) | 0b1000))
+    assert state.active_protections == [
+        "charge_undertemperature",
+        "discharge_overcurrent",
+        "mos_software_lock",
+    ]
+    assert state.balancing_cells == [4, 18]
+
+
+def test_jbd_basic_info_short_payload_leaves_status_none():
+    state = p.jbd_parse_basic_info(_jbd_basic_info()[:12])
+    assert state.protection_status is None
+    assert state.charge_fet_on is None
+    assert state.balance_status is None
+    assert state.active_protections == []
+    assert state.protection_active("cell_overvoltage") is None
