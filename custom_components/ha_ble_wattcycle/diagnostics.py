@@ -58,6 +58,15 @@ async def async_get_config_entry_diagnostics(
                 connection.record_info.capacity if connection.record_info else None
             ),
             "bms_clock_raw": connection.bms_clock.hex if connection.bms_clock else None,
+            "bms_clock": (
+                connection.bms_clock.bms_datetime.isoformat()
+                if connection.bms_clock and connection.bms_clock.bms_datetime
+                else None
+            ),
+            "bms_boot_time": (
+                connection.bms_boot_time.isoformat() if connection.bms_boot_time else None
+            ),
+            "bms_restarts_seen": connection.bms_restart_count,
             "bms_clock_read_at": (
                 connection.bms_clock_read_at.isoformat() if connection.bms_clock_read_at else None
             ),
@@ -66,7 +75,11 @@ async def async_get_config_entry_diagnostics(
                     **{k: v for k, v in asdict(rec).items() if k != "header"},
                     "header": rec.header.hex(" "),
                     "sequence": rec.sequence,
-                    "timestamp_raw": rec.timestamp,
+                    "event_time": (
+                        connection.event_time(rec).isoformat()
+                        if connection.event_time(rec)
+                        else None
+                    ),
                     "protections": rec.active_protections,
                     "warnings": rec.active_warnings,
                 }

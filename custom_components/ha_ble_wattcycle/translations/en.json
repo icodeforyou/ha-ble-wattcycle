@@ -93,10 +93,13 @@
         "name": "Temperature {number}"
       },
       "bms_event_count": {
-        "name": "BMS log entries"
+        "name": "BMS log index"
       },
       "bms_last_event": {
-        "name": "Last BMS event"
+        "name": "Last BMS log record"
+      },
+      "bms_boot_time": {
+        "name": "BMS started"
       }
     },
     "binary_sensor": {

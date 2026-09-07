@@ -121,6 +121,7 @@ class WattCycleConnection:
         self.events: list[FaultRecord] = []
         self.bms_clock: JbdClock | None = None
         self.bms_clock_read_at: datetime | None = None
+        self.bms_restart_count = 0  # clock went backwards since HA started
         self._event_log_supported: bool | None = None
 
     @property
@@ -550,6 +551,14 @@ class WattCycleConnection:
         self.record_info = result
         clock = await self._request(jbd_build_read_frame(JBD_CMD_SYSTEM_TIME))
         if isinstance(clock, JbdClock):
+            prev = self.bms_clock.uptime if self.bms_clock else None
+            now_up = clock.uptime
+            if prev is not None and now_up is not None and now_up < prev:
+                self.bms_restart_count += 1
+                _LOGGER.warning(
+                    "%s BMS clock went from %s back to %s: the BMS restarted",
+                    self._address, prev, now_up,
+                )
             self.bms_clock = clock
             self.bms_clock_read_at = datetime.now(timezone.utc)
         seen = {rec.key for rec in self.events}
@@ -564,9 +573,30 @@ class WattCycleConnection:
             self.events.insert(0, rec)
         del self.events[MAX_EVENT_RECORDS:]
 
+    @property
+    def bms_boot_time(self) -> datetime | None:
+        """When the BMS clock started, in our wall-clock time (assumes JBD_CLOCK_EPOCH)."""
+        if self.bms_clock is None or self.bms_clock_read_at is None:
+            return None
+        up = self.bms_clock.uptime
+        if up is None:
+            return None
+        boot = self.bms_clock_read_at - up
+        return boot.replace(second=0, microsecond=0)  # stable to the minute
+
     def event_time(self, record: FaultRecord) -> datetime | None:
-        """Wall-clock time of a record. None until the header/clock formats are understood."""
-        return None
+        """Wall-clock time of a record: read time minus its age on the BMS clock."""
+        if self.bms_clock is None or self.bms_clock_read_at is None:
+            return None
+        clock_dt = self.bms_clock.bms_datetime
+        if clock_dt is None:
+            return None
+        rec_dt = record.bms_datetime(clock_dt.year)
+        if rec_dt is None:
+            return None
+        if rec_dt > clock_dt:  # record from before a year rollover, or garbage
+            rec_dt = rec_dt.replace(year=clock_dt.year - 1)
+        return self.bms_clock_read_at - (clock_dt - rec_dt)
 
     async def _poll_jbd(self) -> BatteryState:
         basic = await self._request(jbd_build_read_frame(JBD_CMD_BASIC_INFO))

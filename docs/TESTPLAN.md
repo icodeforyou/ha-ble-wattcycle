@@ -61,14 +61,13 @@ landström tappar allt 12 V — inklusive BLE-proxyn — strömmen en kort stund
      release kräver då urladdning (testa med last i stället).
 5. Anteckna utfall i README/PROTOCOL.md och markera 0x0E som verifierat/ej verifierat.
 
-## Fas E — BMS-loggposter (0x06/0x07/0x08), ren läsväg — EXPERIMENTELLT
+## Fas E — BMS-loggposter och klocka (0x06/0x07/0x08), ren läsväg
 
-Första fältdata 2026-09-07: 0x07 och 0x06 svarar, 0x08 ger 68-byte LE-poster (se PROTOCOL.md
-§10.2), ~5 s per post. Öppna frågor att besvara med diagnostikdumpar över tid:
-1. Ändras `event_log.record_index` (226 vid första läsningen, kapacitet 300)? Stiger den var
-   5:e s är det en snapshot-logg; hoppar den bara vid händelser är det en fellogg.
-2. Skiljer sig posterna åt i innehåll (spänning/skydd) när batteriet faktiskt ändrar tillstånd,
-   eller är det alltid nuläget? Jämför `records[].header` och innehåll före/efter omstarten (fas D).
-3. Huvudets byte 4–9 mot `bms_clock_raw` (6 byte, okänt format): hitta sambandet.
-4. Bekräftat: 0x07 nollställer cursorn (byte 3 startar på 2 efter varje 0x07). Varför 2?
-Sensorn *Senaste BMS-händelse* visar okänt värde tills (3) är löst; attributen visar posten.
+Avklarat 2026-09-07: klockan är BCD och går i realtid; posterna är 5-min-snapshots med datum/tid i
+huvudet; 0x07 = index/300. Kvar att observera:
+1. Efter omstarten (fas D): *BMS startad* ska hoppa fram till omstartstidpunkten och loggen ska
+   varna "BMS clock went … back". Klockan bör läsa 2001-01-01 00:00:xx direkt efter.
+2. Sensorn *Senaste BMS-loggpost* ska visa en tid inom de senaste 5–10 minuterna.
+3. Bekräfta epoken: uptime 34 d ⇒ start ≈ 4 aug 2026 11:13 — stämmer det med när batteriet först
+   kopplades in? Om det var tidigare/senare är epoken en annan.
+4. 62 °C-anomalin: återkommer poster med orimliga temperaturer och varning 0x51?

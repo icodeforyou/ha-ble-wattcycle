@@ -20,9 +20,8 @@ interoperability (EU Directive 2009/24/EC Art. 6). MIT licensed.
     `diagnostics.py`, `manifest.json`, `services.yaml`, `strings.json`, `translations/`.
 - `button.py` — BMS restart (JBD 0x0E). The only write command exposed as an entity; MOS
   control (0xFB) and heating (0xFD) are documented in PROTOCOL.md but deliberately not wired.
-- `logbook.py` — describes `ha_ble_wattcycle_bms_event` for the HA logbook. Firing is currently
-  disabled in the coordinator (`_async_publish_new_events`) until 0x08 record semantics are
-  understood; field data showed near-identical records ~5 s apart.
+- `logbook.py` — describes `ha_ble_wattcycle_bms_event` for the HA logbook. Firing is disabled
+  in the coordinator: 0x08 records turned out to be 5-minute snapshots, not fault events.
 - `docs/PROTOCOL.md` — full protocol reference (WATT + JBD, UUIDs, DP 140 telemetry, HiLink auth,
   advertisement layout). **Source of truth — update it when protocol understanding changes.**
 - `docs/TESTPLAN.md` — cautious read-before-write hardware verification plan.

@@ -1,6 +1,7 @@
 """Unit tests for the pure WattCycle protocol logic (no Home Assistant/bleak needed)."""
 
 import struct
+from datetime import datetime, timedelta
 import sys
 from pathlib import Path
 
@@ -320,7 +321,19 @@ def test_jbd_record_info_and_clock_real_frames():
     info = p.jbd_parse_record_info(bytes.fromhex("00e2012c"))
     assert info == p.JbdRecordInfo(index=226, capacity=300)
     assert p.jbd_parse_record_info(b"\x00") is None
-    # 0x06 reply: dd 06 00 06 | 15 01 00 04 02 01 | ff dd 77 — kept raw
+    # 0x06 reply: dd 06 00 06 | 15 01 00 04 02 01 | ff dd 77 — BCD ss mm hh dd MM yy
     clock = p.jbd_parse_clock(bytes.fromhex("150100040201"))
     assert clock.hex == "15 01 00 04 02 01"
+    assert clock.bms_datetime == datetime(2001, 2, 4, 0, 1, 15)
+    assert clock.uptime == timedelta(days=34, minutes=1, seconds=15)
+    later = p.jbd_parse_clock(bytes.fromhex("351600040201"))
+    assert later.bms_datetime - clock.bms_datetime == timedelta(minutes=15, seconds=20)
     assert p.jbd_parse_clock(b"") is None
+    assert p.jbd_parse_clock(bytes.fromhex("ffffffffffff")).bms_datetime is None
+
+
+def test_jbd_record_header_datetime():
+    rec = p.jbd_parse_fault_record(REAL_RECORD)  # header 01 2c 00 06 06 02 43 17 0a 17
+    assert rec.bms_datetime(2001) == datetime(2001, 2, 3, 23, 10, 23)
+    rolled = p.jbd_parse_fault_record(bytes.fromhex("012c0000060244000012") + REAL_RECORD[10:])
+    assert rolled.bms_datetime(2001) == datetime(2001, 2, 4, 0, 0, 18)

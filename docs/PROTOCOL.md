@@ -401,7 +401,7 @@ i appen.
 
 | cmd  | Riktning | Data | Betydelse | Status i integrationen |
 |------|----------|------|-----------|------------------------|
-| 0x06 | läs | → **6 byte, format okänt** (obs: `15 01 00 04 02 01`, 17 min tidigare `16 44 23 03 …`) | appen tolkar de 4 första som u32 BE Unix-tid — ger nonsens på vår modul | läses varje poll, exponeras rått (v0.3.2) |
+| 0x06 | läs | → 6 byte **BCD `ss mm hh dd MM yy`** (`15 01 00 04 02 01` = 2001-02-04 00:01:15; 15 min 23 s senare `35 16 00 04 02 01` = 00:16:35 → går i realtid, **VET**) | klockan är aldrig ställd → räknar från epok 2001-01-01 (TROR) = uptime; appen läser u32 BE Unix — fel | läses varje poll → sensor *BMS startad*, omstart = klockan går bakåt (v0.3.3) |
 | 0x07 | läs | → 2× u16 BE (`00 e2 01 2c` = 226, 300) | TROR: index/skrivna poster och ringstorlek; 300 (`01 2c`) inleder även varje 0x08-post. Nollställer 0x08-cursorn (byte 3 börjar om på 2) — observerat | läses varje poll (v0.3.2) |
 | 0x08 | läs | → post (68 B, LE) | "aktuell post"; appen: nollställ → 0x07 → 0x08 × antal | max 3/poll, experimentellt (v0.3.0); ~5 s per svar observerat |
 | 0x0A | skriv | `18 81` | **återställ fabriksinställningar — skicka ALDRIG** | avsiktligt ej exponerat |
@@ -411,8 +411,10 @@ i appen.
 
 **Loggpost (0x08) — OBSERVERAD layout på DISCOVER 314Ah (2026-09-07), 68 byte payload, LITTLE-endian:**
 ```
-[0:10]  huvud, ej förstått: 01 2c 00 SS 06 02 43 17 TT 17
-        SS räknade ned 06→02 över fem läsningar i rad; TT steg 0a→1e (=10,15,20,25,30, +5/läsning)
+[0:10]  huvud: 01 2c | 00 | SS | 06 | MM DD hh mm ss
+        012c = 300 = ringstorlek; SS = poster kvar i läsbatchen (räknar ned till 0);
+        byte 4 = 06 (okänt); MM månad, DD dag med bit 6 satt (0x43 = dag 3), hh/mm/ss BINÄRT
+        (0x0a = 10 min, 0x2d = 45). Ex: 06 02 43 17 0a 17 = 3 feb 23:10:23 BMS-tid. **VET**
 [10:12] pack-V /100 (4005→13.44 V)   [12:14] ström i16 /100    [14:16] kvarvarande /100 (a77a→313.99)
 [16:18] nominell /100 (a87a→314.0)   [18:20] SKYDD (0001=cell-OV) [20:22] VARNING (0001=cell hög V)
 [22:30] 4× temp (raw−2731)/10, 0 = saknas   (580b→17.3, 560b→17.1, 0000, 5d0b→17.8)
@@ -421,17 +423,18 @@ i appen.
 ```
 Appens `parseFaultRecord` läser big-endian med ett annat huvud (u8 tillstånd + 5 byte tidsstämpel);
 den matchar INTE det vår modul skickar — fältordningen från spänningen och framåt är dock densamma.
-De fem läsningarna hade identiskt innehåll sånär som på SS/TT och enstaka mV, och varje läsning tog
-~5 s. Tolkning (TROR): antingen en periodisk snapshot-ring (post var 5 s) eller "aktuell post" med en
-cursor — inte en ren fellogg. Tidsstämpelformatet i huvudet är olöst (matchar inte 0x06-klockan
-373564163 = 0x16442303 rakt av).
+**Posterna är 5-minuters-snapshots** (VET): posttider 23:10, 23:15 … 00:00, 00:10, 00:15 och 0x07-index
+226→229 på 15 min. 300 platser × 5 min ≈ 25 h historik. Varje 0x08 tar ~5 s; 0x07 nollställer cursorn.
+Anomali 2026-09-07 00:10 BMS-tid: en post med temperaturer 61.9/61.8/62.4 °C och varningsbitar 0x51
+(cell hög V + ladd-/urladd-högtemp) mellan två poster på 17–18 °C, övriga fält identiska — BMS-glitch
+eller annan posttyp, observera om det återkommer.
 
-Integrationen (v0.3.2, experimentellt) läser 0x07 + 0x06 varje poll och 1 post per poll (0x08), dedupliserade på råhuvudet, max 50 i minnet. Exponeras som sensorerna
+Integrationen (v0.3.3) läser 0x07 + 0x06 varje poll och 1 post per poll (0x08), dedupliserade på råhuvudet, max 50 i minnet. Exponeras som sensorerna
 *BMS-loggposter* och *Senaste BMS-händelse* (posten som attribut inkl. `raw_header`) samt i
-diagnostiken. Loggboks-events är avstängda tills postens semantik är förstådd. Ingen omstartsdetektering via 0x06 —
-formatet är okänt och värdet är inte monotont.
+diagnostiken. Posternas tid = lästid − (BMS-klocka − posttid). Loggboks-events avstängda (snapshots = brus). Omstart
+detekteras när klockans uptime minskar (varning i loggen, räknare som attribut på *BMS startad*).
 
-Kvar att kartlägga: BMS-status-bitordning, 0x06-klockans epok, loggpostens huvud (byte 0–9: räknare/tidsstämpel), vad en 0x08-post representerar, om 0x07 nollställer cursorn.
+Kvar att kartlägga: BMS-status-bitordning, klockepoken (2001 antagen), huvudets byte 4 (0x06), vilka poster 0x07 ställer cursorn på (sågs: de 3 resp. 7 senaste), 62 °C-anomalin.
 
 ### Ursprungliga valideringsmål (datablad)
 

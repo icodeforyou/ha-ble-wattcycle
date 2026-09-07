@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from enum import Enum
 
 
@@ -556,13 +557,21 @@ def jbd_parse_record_info(payload: bytes) -> JbdRecordInfo | None:
     return JbdRecordInfo(index, capacity)
 
 
+# The BMS clock is never set on this pack, so it counts from its own epoch. Two reads 15 min
+# 23 s apart advanced 15 min 20 s and read 2001-02-04 00:xx after 34 days of service, so the
+# epoch is taken as 2001-01-01 00:00:00 (unverified — 2000 would imply >1 year of uptime for a
+# battery manufactured 2026-05).
+JBD_CLOCK_EPOCH = datetime(2001, 1, 1)
+
+
+def _bcd(byte: int) -> int:
+    return (byte >> 4) * 10 + (byte & 0x0F)
+
+
 @dataclass(frozen=True)
 class JbdClock:
-    """Reply to 0x06 ("system time"). Observed as 6 raw bytes whose format is unknown.
-
-    The app parses the first four bytes as a big-endian Unix timestamp; on this pack that
-    yields nonsense (e.g. 15 01 00 04 02 01, and 16 44 23 03 .. .. seventeen minutes earlier),
-    so only the raw bytes are kept until the format is understood.
+    """Reply to 0x06: six BCD bytes `ss mm hh dd MM yy` (verified 2026-09-07 against two
+    reads of known spacing). The app reads the first four bytes as a Unix u32 — wrong here.
     """
 
     raw: bytes
@@ -570,6 +579,25 @@ class JbdClock:
     @property
     def hex(self) -> str:
         return self.raw.hex(" ")
+
+    @property
+    def bms_datetime(self) -> datetime | None:
+        """The BMS's own wall clock (its epoch, not ours)."""
+        if len(self.raw) < 6:
+            return None
+        try:
+            ss, mm, hh, dd, mo, yy = (_bcd(b) for b in self.raw[:6])
+            return datetime(2000 + yy, mo, dd, hh, mm, ss)
+        except ValueError:
+            return None
+
+    @property
+    def uptime(self) -> timedelta | None:
+        """Time since the BMS clock started, assuming JBD_CLOCK_EPOCH."""
+        dt = self.bms_datetime
+        if dt is None:
+            return None
+        return dt - JBD_CLOCK_EPOCH
 
 
 def jbd_parse_clock(payload: bytes) -> JbdClock | None:
@@ -583,10 +611,11 @@ class FaultRecord:
     """One entry read with JBD 0x08 ("current record"), as the DISCOVER 314Ah actually sends it.
 
     Observed 2026-09-07 (68-byte payload): LITTLE-endian, unlike the app's big-endian
-    parseFaultRecord, but with the app's field order from the voltage onwards. The first ten
-    bytes hold a counter and a timestamp whose format is not yet understood — they are kept
-    raw in `header`. Consecutive reads came back ~5 s apart with byte 3 counting down, so this
-    may be a periodic snapshot ring rather than a fault log. Treat as experimental.
+    parseFaultRecord, but with the app's field order from the voltage onwards. Header:
+    `01 2c 00 SS 06 MM DD hh mm ss` — 0x012c = 300 (ring size), SS = records left in the
+    batch, then month, day (bit 6 set), hour, minute, second in binary. Records are written
+    every 5 minutes (index rose 226→229 in 15 min); 300 slots = ~25 h of history. So this is a
+    periodic snapshot ring, not a fault log. Byte 4 (0x06) is not understood.
     """
 
     header: bytes  # payload[0:10], raw
@@ -606,13 +635,21 @@ class FaultRecord:
 
     @property
     def sequence(self) -> int:
-        """Byte 3 of the header: counts down across consecutive reads (meaning unverified)."""
+        """Byte 3 of the header: records remaining in this read batch (counts down to 0)."""
         return self.header[3]
 
-    @property
-    def timestamp(self) -> int:
-        """Header bytes 4-8 as a little-endian integer. Epoch/unit unverified."""
-        return int.from_bytes(self.header[4:9], "little")
+    def bms_datetime(self, year: int) -> datetime | None:
+        """Record time on the BMS clock: header bytes 5-9 = month, day|0x40, hh, mm, ss (binary).
+
+        The header carries no year; pass the year of the BMS clock (see JbdClock).
+        """
+        try:
+            return datetime(
+                year, self.header[5], self.header[6] & 0x1F,
+                self.header[7], self.header[8], self.header[9],
+            )
+        except (ValueError, IndexError):
+            return None
 
     @property
     def active_protections(self) -> list[str]:

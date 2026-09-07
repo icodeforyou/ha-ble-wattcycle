@@ -192,6 +192,8 @@ async def async_setup_entry(
     if coordinator.connection.event_count is not None:
         entities.append(WattCycleEventCountSensor(coordinator))
         entities.append(WattCycleLastEventSensor(coordinator))
+    if coordinator.connection.bms_clock is not None:
+        entities.append(WattCycleBootTimeSensor(coordinator))
     async_add_entities(entities)
 
 
@@ -323,9 +325,42 @@ class WattCycleLastEventSensor(WattCycleEntity, SensorEntity):
             "discharge_fet_on": rec.discharge_fet_on,
             "raw_header": rec.header.hex(" "),
             "sequence": rec.sequence,
-            "bms_timestamp_raw": rec.timestamp,
             "bms_clock_raw": conn.bms_clock.hex if conn.bms_clock else None,
             "record_index": conn.record_info.index if conn.record_info else None,
             "record_capacity": conn.record_info.capacity if conn.record_info else None,
             "records_read": len(conn.events),
+        }
+
+
+class WattCycleBootTimeSensor(WattCycleEntity, SensorEntity):
+    """When the BMS (re)started, derived from its never-set clock (JBD 0x06).
+
+    The clock is BCD ss mm hh dd MM yy and counts from 2001-01-01 (assumed), so boot time is
+    read time minus that uptime. Rounded to the minute so the state does not churn every poll.
+    A jump forward means the BMS restarted; the restart count since HA start is an attribute.
+    """
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:restart"
+
+    def __init__(self, coordinator: WattCycleCoordinator) -> None:
+        super().__init__(coordinator, "bms_boot_time")
+        self._attr_translation_key = "bms_boot_time"
+
+    @property
+    def native_value(self):
+        return self.coordinator.connection.bms_boot_time
+
+    @property
+    def extra_state_attributes(self) -> dict | None:
+        conn = self.coordinator.connection
+        if conn.bms_clock is None:
+            return None
+        up = conn.bms_clock.uptime
+        return {
+            "bms_clock": conn.bms_clock.bms_datetime.isoformat() if conn.bms_clock.bms_datetime else None,
+            "bms_clock_raw": conn.bms_clock.hex,
+            "uptime_seconds": int(up.total_seconds()) if up else None,
+            "restarts_seen": conn.bms_restart_count,
         }
