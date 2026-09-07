@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 
+from bleak.exc import BleakError
+
 from homeassistant.components.button import (
     ButtonDeviceClass,
     ButtonEntity,
@@ -65,8 +67,17 @@ async def async_restart_bms(coordinator: WattCycleCoordinator) -> None:
     """Send the restart, surface the BMS's answer, and re-poll once it is back."""
     try:
         ack = await coordinator.connection.async_restart_bms()
-    except (ValueError, TimeoutError, OSError) as err:
-        raise HomeAssistantError(f"BMS restart failed: {err}") from err
+    except TimeoutError as err:
+        # The frame was written but no ack came back within the command timeout. Either the
+        # BMS rebooted at once without acknowledging, or it ignored the command. The next poll
+        # tells which: a BMS clock that restarted from 2001-01-01 means it rebooted.
+        raise HomeAssistantError(
+            "BMS restart: frame sent but no acknowledgement within the timeout. Check the "
+            "'BMS started' sensor after the next poll — if it jumped to now, the BMS rebooted "
+            "without acking; if not, the command was ignored."
+        ) from err
+    except (ValueError, OSError, BleakError) as err:
+        raise HomeAssistantError(f"BMS restart failed: {type(err).__name__}: {err}") from err
     if not ack.ok:
         raise HomeAssistantError(f"BMS refused the restart: {ack.error}")
     _LOGGER.info("BMS acknowledged restart; re-polling in %ss", RESTART_REFRESH_DELAY)

@@ -629,6 +629,12 @@ class WattCycleConnection:
             _LOGGER.info("Sending BMS restart to %s: %s", self._address, frame.hex())
             try:
                 result = await self._request(frame)
+            except asyncio.TimeoutError:
+                _LOGGER.warning(
+                    "%s: no ack to restart within timeout; rx seen since: %s",
+                    self._address, self.last_rx[:3],
+                )
+                raise
             finally:
                 # Whatever happened, the BMS is about to (or did) drop us.
                 await self.async_disconnect()

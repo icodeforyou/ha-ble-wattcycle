@@ -313,7 +313,6 @@ class WattCycleLastEventSensor(WattCycleEntity, SensorEntity):
             "warnings": rec.active_warnings,
             "voltage": rec.voltage,
             "current": rec.current,
-            "soc": rec.soc,
             "remaining_capacity": rec.remaining_capacity,
             "max_cell_voltage": rec.max_cell_voltage,
             "max_cell_index": rec.max_cell_index,
