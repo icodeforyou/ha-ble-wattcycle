@@ -85,9 +85,10 @@ BINARY_SENSORS: tuple[WattCycleBinaryDescription, ...] = (
     ),
     # --- JBD status: any protection tripped -------------------------------------------
     WattCycleBinaryDescription(
+        # Deliberately no PROBLEM device class: a tripped protection is the BMS doing its
+        # job (e.g. cell overvoltage at end of charge), not a fault. Shows plain on/off.
         key="protection",
         translation_key="protection",
-        device_class=BinarySensorDeviceClass.PROBLEM,
         value_fn=lambda s: bool(s.protection_status) if s.protection_status is not None else None,
         exists_fn=_has_jbd_status,
         attributes_fn=lambda s: {
@@ -100,7 +101,6 @@ BINARY_SENSORS: tuple[WattCycleBinaryDescription, ...] = (
     WattCycleBinaryDescription(
         key=f"protection_{name}",
         translation_key=f"protection_{name}",
-        device_class=BinarySensorDeviceClass.PROBLEM,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda s, _name=name: s.protection_active(_name),
         exists_fn=_has_jbd_status,

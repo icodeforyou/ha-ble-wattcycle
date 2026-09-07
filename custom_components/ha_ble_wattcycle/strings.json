@@ -110,7 +110,7 @@
         "name": "Balancing"
       },
       "protection": {
-        "name": "Protection active"
+        "name": "BMS protection tripped"
       },
       "protection_cell_overvoltage": {
         "name": "Cell overvoltage protection"

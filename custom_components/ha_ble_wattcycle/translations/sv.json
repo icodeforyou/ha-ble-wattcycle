@@ -110,7 +110,7 @@
         "name": "Balanserar"
       },
       "protection": {
-        "name": "Skydd aktivt"
+        "name": "BMS-skydd utlöst"
       },
       "protection_cell_overvoltage": {
         "name": "Skydd cellöverspänning"
