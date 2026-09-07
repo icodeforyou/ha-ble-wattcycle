@@ -60,12 +60,10 @@ async def async_get_config_entry_diagnostics(
             ),
             "records": [
                 {
-                    **asdict(rec),
-                    "event_time": (
-                        connection.event_time(rec).isoformat()
-                        if connection.event_time(rec)
-                        else None
-                    ),
+                    **{k: v for k, v in asdict(rec).items() if k != "header"},
+                    "header": rec.header.hex(" "),
+                    "sequence": rec.sequence,
+                    "timestamp_raw": rec.timestamp,
                     "protections": rec.active_protections,
                     "warnings": rec.active_warnings,
                 }

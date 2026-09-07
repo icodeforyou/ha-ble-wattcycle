@@ -31,11 +31,11 @@ JBD/Xiaoxiang-based packs) over Bluetooth Low Energy. Works through **ESPHome Bl
 - **Restart BMS** button and `restart_bms` service — the app's "Reboot system", for clearing a
   latched protection such as cell overvoltage after a full charge (JBD packs; **unverified
   against hardware until the first field test**, see docs/TESTPLAN.md phase D).
-- **BMS event log**: the BMS's own fault/event records (JBD 0x07/0x08) with timestamps anchored
-  to wall-clock via the BMS clock (0x06). Exposed as *BMS log entries* and *Last BMS event*
-  (full record as attributes), as `ha_ble_wattcycle_bms_event` events that appear in the
-  device's logbook, and in full in diagnostics. Read path only; unverified against hardware
-  until the first field test.
+- **BMS record log (experimental)**: reads the BMS's record count, clock and up to three records
+  per poll (JBD 0x07/0x06/0x08). Exposed as *BMS log entries* and *Last BMS event* (the record
+  as attributes) and in full in diagnostics. The record layout was captured from a DISCOVER
+  314Ah (little-endian, unlike the app's parser); what a record represents and how its
+  timestamp works is not yet understood, so no logbook events are fired yet.
 - Diagnostics that dump the last raw TX/RX frames, the last write acknowledgement, the event
   log and the decoded state.
 - `send_raw` service for continued protocol exploration.

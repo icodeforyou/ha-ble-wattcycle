@@ -403,32 +403,36 @@ i appen.
 |------|----------|------|-----------|------------------------|
 | 0x06 | läs | → u32 BE | BMS-klocka i sekunder (epok okänd: Unix om appen ställt den, annars troligen sedan start) | läses varje poll (v0.3.0) — används för att åldersbestämma loggposter och upptäcka omstart (klockan går bakåt) |
 | 0x07 | läs | → u32 BE | antal loggposter (nollställer troligen läscursorn — **verifiera**) | läses varje poll (v0.3.0) |
-| 0x08 | läs | → post | nästa loggpost via BMS:ens cursor (appen: nollställ lista → 0x07 → 0x08 × antal) | läses när antalet ändras eller BMS:en startat om, max 50 (v0.3.0) |
+| 0x08 | läs | → post (68 B, LE) | "aktuell post"; appen: nollställ → 0x07 → 0x08 × antal | max 3/poll, experimentellt (v0.3.0); ~5 s per svar observerat |
 | 0x0A | skriv | `18 81` | **återställ fabriksinställningar — skicka ALDRIG** | avsiktligt ej exponerat |
 | 0x0E | skriv | `81 18` | mjuk omstart av BMS ("Reboot system") → `DD 5A 0E 02 81 18 FF 57 77` | knapp + tjänst `restart_bms` (v0.3.0), **overifierat mot hårdvara** |
 | 0xFB | skriv | `<mål> <värde>` | MOS-styrning: mål 1 = ladd, 0 = urladd; värde 1 = AV, 0 = PÅ | ej exponerat (urladd-av kopplar bort bodelen) |
 | 0xFD | skriv | `<1 på/2 av> <h> <min> <start °C> <stopp °C>` | värmestyrning | ej exponerat |
 
-**Loggpost (0x08, `parseFaultRecord`, big-endian, fältordning ur `JbdFaultRecord`-konstruktorn):**
+**Loggpost (0x08) — OBSERVERAD layout på DISCOVER 314Ah (2026-09-07), 68 byte payload, LITTLE-endian:**
 ```
-u8   ladd/urladd-tillstånd (kod, betydelse overifierad)
-5B   timestamp (BMS-sekunder)
-u16  pack-V /100        i16 ström /100        u16 kvarvarande /100    u16 nominell /100
-u16  skyddsbitar        u16 varningsbitar
-u16×4 temp (raw−2731)/10: max cell, min cell, omgivning, kärna
-u16  max cell-V /1000   u16 min cell-V /1000  u8 idx max  u8 idx min
-u8   FET-status         u8 versionsflagga     u8 reserv   u8 antal celler
-u16×N cellspänningar /1000
---- valfri svans ---
-u8 grupp-id  u8 RSOC  u16 BMS-status  u16 cykler  u8.u8 mjukvaruversion  u16  u16
+[0:10]  huvud, ej förstått: 01 2c 00 SS 06 02 43 17 TT 17
+        SS räknade ned 06→02 över fem läsningar i rad; TT steg 0a→1e (=10,15,20,25,30, +5/läsning)
+[10:12] pack-V /100 (4005→13.44 V)   [12:14] ström i16 /100    [14:16] kvarvarande /100 (a77a→313.99)
+[16:18] nominell /100 (a87a→314.0)   [18:20] SKYDD (0001=cell-OV) [20:22] VARNING (0001=cell hög V)
+[22:30] 4× temp (raw−2731)/10, 0 = saknas   (580b→17.3, 560b→17.1, 0000, 5d0b→17.8)
+[30:32] max cell /1000   [32:34] min cell /1000   [34] idx max (1)   [35] idx min (4)
+[36]    FET-status (02)  [37] ?                     [38..] cellspänningar /1000, oanvända platser = 0x0e10 (3.600 V)
 ```
-Integrationen (v0.3.0) exponerar loggen som sensorerna *BMS-loggposter* och *Senaste BMS-händelse*
-(tidsstämpel + hela posten som attribut), eldar HA-eventet `ha_ble_wattcycle_bms_event` för varje
-ny post (syns i Loggboken på enhetssidan) och dumpar alla poster i diagnostiken. Tidsstämplarna
-omräknas till väggklocka som `lästidpunkt − (BMS-klocka − post.timestamp)`, oberoende av epok.
-**Ej fältverifierat:** att 0x07/0x08 svarar alls, cursorbeteendet, epok, postlängd.
+Appens `parseFaultRecord` läser big-endian med ett annat huvud (u8 tillstånd + 5 byte tidsstämpel);
+den matchar INTE det vår modul skickar — fältordningen från spänningen och framåt är dock densamma.
+De fem läsningarna hade identiskt innehåll sånär som på SS/TT och enstaka mV, och varje läsning tog
+~5 s. Tolkning (TROR): antingen en periodisk snapshot-ring (post var 5 s) eller "aktuell post" med en
+cursor — inte en ren fellogg. Tidsstämpelformatet i huvudet är olöst (matchar inte 0x06-klockan
+373564163 = 0x16442303 rakt av).
 
-Kvar att kartlägga: BMS-status-bitordning, systemtidens epok, loggformat mot verklig data, tillståndskoden i loggposternas första byte.
+Integrationen (v0.3.0, experimentellt) läser antal (0x07) + klocka (0x06) varje poll och högst
+3 poster per poll (0x08), dedupliserade på råhuvudet, max 50 i minnet. Exponeras som sensorerna
+*BMS-loggposter* och *Senaste BMS-händelse* (posten som attribut inkl. `raw_header`) samt i
+diagnostiken. Loggboks-events är avstängda tills postens semantik är förstådd. Klockan som går
+bakåt mellan två polls tolkas som BMS-omstart (loggas).
+
+Kvar att kartlägga: BMS-status-bitordning, 0x06-klockans epok, loggpostens huvud (byte 0–9: räknare/tidsstämpel), vad en 0x08-post representerar, om 0x07 nollställer cursorn.
 
 ### Ursprungliga valideringsmål (datablad)
 

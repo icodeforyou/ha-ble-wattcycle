@@ -25,7 +25,7 @@ from .const import (
     CONNECT_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
-    EVENT_BMS_EVENT,
+    EVENT_RECORDS_PER_POLL,
     MAX_CONNECT_ATTEMPTS,
     MAX_EVENT_RECORDS,
     PAIR_TIMEOUT,
@@ -119,6 +119,7 @@ class WattCycleConnection:
         self.bms_time: int | None = None  # BMS seconds at the moment the log was read
         self.bms_time_read_at: datetime | None = None
         self._event_log_supported: bool | None = None
+        self._records_pending = 0
 
     @property
     def firmware_version(self) -> int | None:
@@ -517,11 +518,13 @@ class WattCycleConnection:
         )
 
     async def _refresh_event_log(self) -> None:
-        """Read the record count every poll; fetch the log itself only when it changes.
+        """Read the record count and BMS clock every poll, then at most a few records.
 
-        The app clears its list, reads 0x07, then reads 0x08 `count` times — the BMS keeps a
-        read cursor. 0x06 is read in the same pass so record timestamps (BMS seconds, unknown
-        epoch) can be anchored to wall-clock time by age.
+        Field observation (2026-09-07): each 0x08 round trip took ~5 s on this pack, so a
+        full read must never happen inside one poll. Records are fetched a few at a time
+        across polls, deduplicated on their raw header, and kept newest-first up to
+        MAX_EVENT_RECORDS. What a record represents (fault entry vs periodic snapshot) is
+        still unverified — see docs/PROTOCOL.md.
         """
         if self._event_log_supported is False:
             return
@@ -535,39 +538,42 @@ class WattCycleConnection:
         if not isinstance(result, int):
             return
         self._event_log_supported = True
-        count = result
-        # The clock is cheap and re-anchors record ages every poll; a clock that went
-        # backwards means the BMS rebooted, so the log is re-read even if the count matches.
+        count_changed = result != self.event_count
+        self.event_count = result
         clock = await self._request(jbd_build_read_frame(JBD_CMD_SYSTEM_TIME))
         rebooted = False
         if isinstance(clock, int):
             rebooted = self.bms_time is not None and clock < self.bms_time
             self.bms_time = clock
             self.bms_time_read_at = datetime.now(timezone.utc)
-        if count == self.event_count and self.events and not rebooted:
+        if rebooted:
+            _LOGGER.info("%s BMS clock went backwards (%s -> %s): BMS restarted",
+                         self._address, self.bms_time, clock)
+        if not (count_changed or rebooted or not self.events) and self._records_pending <= 0:
             return
-        _LOGGER.debug("%s event log: %s records (had %s)", self._address, count, self.event_count)
-        records: list[FaultRecord] = []
-        for _ in range(min(count, MAX_EVENT_RECORDS)):
+        if count_changed or rebooted:
+            self._records_pending = min(result, MAX_EVENT_RECORDS)
+        seen = {rec.key for rec in self.events}
+        for _ in range(min(self._records_pending, EVENT_RECORDS_PER_POLL)):
             rec = await self._request(jbd_build_read_frame(JBD_CMD_RECORD_CURRENT))
+            self._records_pending -= 1
             if not isinstance(rec, FaultRecord):
-                _LOGGER.debug("%s event log read stopped early: %r", self._address, rec)
+                _LOGGER.debug("%s event log read stopped: %r", self._address, rec)
+                self._records_pending = 0
                 break
-            if records and rec.key == records[-1].key:
-                # Cursor did not advance — the BMS is repeating the last entry.
-                break
-            records.append(rec)
-        self.event_count = count
-        self.events = records
+            if rec.key in seen:
+                continue
+            seen.add(rec.key)
+            self.events.insert(0, rec)
+        del self.events[MAX_EVENT_RECORDS:]
 
     def event_time(self, record: FaultRecord) -> datetime | None:
-        """Wall-clock time of a record, anchored on the BMS clock at read time."""
-        if self.bms_time is None or self.bms_time_read_at is None:
-            return None
-        age = self.bms_time - record.timestamp
-        if age < 0:
-            return None
-        return self.bms_time_read_at - timedelta(seconds=age)
+        """Wall-clock time of a record, anchored on the BMS clock at read time.
+
+        Returns None until the record timestamp format is understood: the observed header
+        bytes do not line up with the 0x06 clock, so no age can be derived yet.
+        """
+        return None
 
     async def _poll_jbd(self) -> BatteryState:
         basic = await self._request(jbd_build_read_frame(JBD_CMD_BASIC_INFO))
@@ -653,7 +659,6 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
             async with asyncio.timeout(POLL_TIMEOUT):
                 state = await self.connection.async_poll()
             self._async_persist_protocol_mode()
-            self._async_publish_new_events()
             return state
         except (BleakError, asyncio.TimeoutError, EOFError) as err:
             # Drop the connection so the next cycle re-establishes cleanly.
@@ -662,41 +667,13 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
             raise UpdateFailed(f"Error polling {self.entry.title}: {detail}") from err
 
     def _async_publish_new_events(self) -> None:
-        """Fire one HA event per BMS log record not seen before (shown in the logbook).
+        """Placeholder: logbook events are held back until we know what a record represents.
 
-        The first read after startup only seeds the seen-set: replaying a whole historic
-        log into the logbook on every HA restart would be noise.
+        Field data shows consecutive 0x08 reads ~5 s apart with identical content, i.e. likely
+        periodic snapshots — firing one logbook entry per record would be noise. Re-enable
+        (see git history / logbook.py) once the record semantics and timestamp are verified.
         """
-        events = self.connection.events
-        if not events:
-            return
-        keys = {rec.key for rec in events}
-        if self._seen_events is None:
-            self._seen_events = keys
-            return
-        new = [rec for rec in events if rec.key not in self._seen_events]
-        self._seen_events |= keys
-        for rec in new:
-            when = self.connection.event_time(rec)
-            self.hass.bus.async_fire(
-                EVENT_BMS_EVENT,
-                {
-                    "entry_id": self.entry.entry_id,
-                    "device_name": self.entry.title,
-                    "summary": rec.summary(),
-                    "protections": rec.active_protections,
-                    "warnings": rec.active_warnings,
-                    "bms_timestamp": rec.timestamp,
-                    "event_time": when.isoformat() if when else None,
-                    "voltage": rec.voltage,
-                    "current": rec.current,
-                    "soc": rec.soc,
-                    "max_cell_voltage": rec.max_cell_voltage,
-                    "min_cell_voltage": rec.min_cell_voltage,
-                    "charge_fet_on": rec.charge_fet_on,
-                    "discharge_fet_on": rec.discharge_fet_on,
-                },
-            )
+        return
 
     def _async_persist_protocol_mode(self) -> None:
         """Store the probed wire protocol on the entry so restarts skip the ladder."""

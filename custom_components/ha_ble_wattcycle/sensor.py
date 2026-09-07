@@ -270,8 +270,9 @@ class WattCycleEventCountSensor(WattCycleEntity, SensorEntity):
 class WattCycleLastEventSensor(WattCycleEntity, SensorEntity):
     """The most recent BMS event-log record.
 
-    State is the record's wall-clock time, derived from its BMS timestamp and the BMS clock
-    at read time; the record itself (flags, voltages, cells) is in the attributes.
+    The record (flags, voltages, cells, raw header) is in the attributes. The state is meant
+    to be the record's wall-clock time but stays unknown until the timestamp format in the
+    header is understood — see docs/PROTOCOL.md.
     """
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
@@ -283,15 +284,14 @@ class WattCycleLastEventSensor(WattCycleEntity, SensorEntity):
 
     def _latest(self):
         events = self.coordinator.connection.events
-        if not events:
-            return None
-        return max(events, key=lambda r: r.timestamp)
+        return events[0] if events else None
 
     @property
     def native_value(self):
         rec = self._latest()
         if rec is None:
             return None
+        # None until the record timestamp format is verified; the record is in the attributes.
         return self.coordinator.connection.event_time(rec)
 
     @property
@@ -313,13 +313,13 @@ class WattCycleLastEventSensor(WattCycleEntity, SensorEntity):
             "min_cell_voltage": rec.min_cell_voltage,
             "min_cell_index": rec.min_cell_index,
             "cell_voltages": rec.cell_voltages,
-            "max_cell_temperature": rec.max_cell_temperature,
-            "min_cell_temperature": rec.min_cell_temperature,
-            "core_temperature": rec.core_temperature,
-            "ambient_temperature": rec.ambient_temperature,
+            "temperatures": rec.temperatures,
             "charge_fet_on": rec.charge_fet_on,
             "discharge_fet_on": rec.discharge_fet_on,
-            "bms_timestamp": rec.timestamp,
+            "raw_header": rec.header.hex(" "),
+            "sequence": rec.sequence,
+            "bms_timestamp_raw": rec.timestamp,
             "bms_clock": conn.bms_time,
             "records_total": conn.event_count,
+            "records_read": len(conn.events),
         }

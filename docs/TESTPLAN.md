@@ -61,15 +61,14 @@ landström tappar allt 12 V — inklusive BLE-proxyn — strömmen en kort stund
      release kräver då urladdning (testa med last i stället).
 5. Anteckna utfall i README/PROTOCOL.md och markera 0x0E som verifierat/ej verifierat.
 
-## Fas E — BMS-händelselogg (0x06/0x07/0x08), ren läsväg
+## Fas E — BMS-loggposter (0x06/0x07/0x08), ren läsväg — EXPERIMENTELLT
 
-Körs automatiskt av v0.3.0 vid varje poll. Kontrollera efter uppdatering + omladdning:
-1. Sensorn *BMS-loggposter* finns och har ett värde (annars: diagnostik → `event_log.count`
-   null och loggen säger "does not answer the event-log count" → firmwaren saknar 0x07).
-2. *Senaste BMS-händelse* har en tidsstämpel nära 02:36 den 7 sep (cell-OVP) om loggen
-   innehåller nattens händelse och BMS-klockan är konsekvent. Attributen ska visa
-   `protections: [cell_overvoltage]`, `max_cell_voltage` ≈ 3.65 och `max_cell_index` 1.
-3. Diagnostik → `event_log.records`: rimliga spänningar/temperaturer i varje post; om alla
-   poster är identiska har cursorn inte flyttat sig (då behövs troligen 0x07 före varje 0x08).
-4. Efter omstartstestet (fas D): BMS-klockan ska ha gått bakåt → loggen läses om; en ny post
-   kan ha tillkommit. Loggboken på enhetssidan ska visa "… BMS logged: …".
+Första fältdata 2026-09-07: 0x07 och 0x06 svarar, 0x08 ger 68-byte LE-poster (se PROTOCOL.md
+§10.2), ~5 s per post. Öppna frågor att besvara med diagnostikdumpar över tid:
+1. Ändras `event_log.count` någonsin? Om den är konstant (ringbuffer) eller stiger var 5:e s
+   (snapshot-logg) säger det vad en post är.
+2. Skiljer sig posterna åt i innehåll (spänning/skydd) när batteriet faktiskt ändrar tillstånd,
+   eller är det alltid nuläget? Jämför `records[].header` och innehåll före/efter omstarten (fas D).
+3. Huvudets byte 4–8 mot `bms_time`: hitta sambandet (BCD? sekunder sedan start? annan epok?).
+4. Nollställer 0x07 cursorn (byte 3 börjar om på samma värde efter varje 0x07)?
+Sensorn *Senaste BMS-händelse* visar okänt värde tills (3) är löst; attributen visar posten.

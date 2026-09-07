@@ -546,34 +546,39 @@ def jbd_parse_u32(payload: bytes) -> int | None:
 
 @dataclass
 class FaultRecord:
-    """One entry of the BMS event log (JBD 0x08), layout from the app's parseFaultRecord.
+    """One entry read with JBD 0x08 ("current record"), as the DISCOVER 314Ah actually sends it.
 
-    `timestamp` is the BMS's own clock in seconds. Its epoch is unknown: it may be Unix time
-    if the app ever set it, or seconds since the BMS last booted if not. Callers should
-    anchor it against the BMS's current time (0x06) rather than trust it as wall-clock.
+    Observed 2026-09-07 (68-byte payload): LITTLE-endian, unlike the app's big-endian
+    parseFaultRecord, but with the app's field order from the voltage onwards. The first ten
+    bytes hold a counter and a timestamp whose format is not yet understood — they are kept
+    raw in `header`. Consecutive reads came back ~5 s apart with byte 3 counting down, so this
+    may be a periodic snapshot ring rather than a fault log. Treat as experimental.
     """
 
-    state: int  # charge/discharge state code (meaning unverified)
-    timestamp: int  # BMS seconds, 40-bit
+    header: bytes  # payload[0:10], raw
     voltage: float
     current: float
     remaining_capacity: float
     nominal_capacity: float
     protection_status: int
     warning_status: int
-    max_cell_temperature: float
-    min_cell_temperature: float
-    ambient_temperature: float
-    core_temperature: float
+    temperatures: list[float | None]  # 4 slots, None where the BMS sends 0
     max_cell_voltage: float
     min_cell_voltage: float
     max_cell_index: int
     min_cell_index: int
     fet_status: int
     cell_voltages: list[float] = field(default_factory=list)
-    soc: int | None = None
-    cycles: int | None = None
-    software_version: str | None = None
+
+    @property
+    def sequence(self) -> int:
+        """Byte 3 of the header: counts down across consecutive reads (meaning unverified)."""
+        return self.header[3]
+
+    @property
+    def timestamp(self) -> int:
+        """Header bytes 4-8 as a little-endian integer. Epoch/unit unverified."""
+        return int.from_bytes(self.header[4:9], "little")
 
     @property
     def active_protections(self) -> list[str]:
@@ -592,56 +597,55 @@ class FaultRecord:
         return bool(self.fet_status & JBD_FET_DISCHARGE)
 
     @property
-    def key(self) -> tuple[int, int, int]:
+    def key(self) -> bytes:
         """Identity used to spot records already seen."""
-        return (self.timestamp, self.protection_status, self.warning_status)
+        return self.header
 
     def summary(self) -> str:
-        """Short human-readable description for logbook/notifications."""
+        """Short human-readable description."""
         parts = [k.replace("_", " ") for k in self.active_protections]
         if not parts:
             parts = [f"warning: {k.replace('_', ' ')}" for k in self.active_warnings]
         if not parts:
             parts = ["no flags"]
         return (
-            f"{', '.join(parts)} — {self.voltage:.2f} V, {self.current:+.1f} A, "
+            f"{', '.join(parts)} — {self.voltage:.2f} V, {self.current:+.2f} A, "
             f"cell max {self.max_cell_voltage:.3f} V (#{self.max_cell_index}), "
             f"min {self.min_cell_voltage:.3f} V (#{self.min_cell_index})"
         )
 
 
-def _temp(raw: int) -> float:
-    return round((raw - 2731) / 10.0, 1)
+def _temp_or_none(raw: int) -> float | None:
+    return None if raw == 0 else round((raw - 2731) / 10.0, 1)
+
+
+# Unused cell slots in a record are padded with this value (3.600 V).
+_RECORD_CELL_PAD = 3600
 
 
 def jbd_parse_fault_record(payload: bytes) -> FaultRecord | None:
-    """Decode one 0x08 record. Returns None if the payload is too short."""
-    if len(payload) < 36:
+    """Decode one 0x08 record (little-endian, observed layout). None if too short."""
+    if len(payload) < 38:
         return None
-    ts = int.from_bytes(payload[1:6], "big")
     (v, i, rem, nom, prot, warn, t1, t2, t3, t4, vmax, vmin) = struct.unpack(
-        ">HhHHHHHHHHHH", payload[6:30]
+        "<HhHHHHHHHHHH", payload[10:34]
     )
-    max_idx, min_idx, fet, _version_flag, _reserved, cell_count = payload[30:36]
+    max_idx, min_idx, fet = payload[34], payload[35], payload[36]
     cells: list[float] = []
-    pos = 36
-    for _ in range(cell_count):
-        if len(payload) >= pos + 2:
-            cells.append(round(struct.unpack(">H", payload[pos : pos + 2])[0] / 1000.0, 3))
-            pos += 2
-    rec = FaultRecord(
-        state=payload[0],
-        timestamp=ts,
+    for pos in range(38, len(payload) - 1, 2):
+        raw = struct.unpack("<H", payload[pos : pos + 2])[0]
+        if raw == _RECORD_CELL_PAD and len(cells) >= 1:
+            break
+        cells.append(round(raw / 1000.0, 3))
+    return FaultRecord(
+        header=bytes(payload[0:10]),
         voltage=round(v / 100.0, 2),
         current=round(i / 100.0, 2),
         remaining_capacity=round(rem / 100.0, 2),
         nominal_capacity=round(nom / 100.0, 2),
         protection_status=prot,
         warning_status=warn,
-        max_cell_temperature=_temp(t1),
-        min_cell_temperature=_temp(t2),
-        ambient_temperature=_temp(t3),
-        core_temperature=_temp(t4),
+        temperatures=[_temp_or_none(t) for t in (t1, t2, t3, t4)],
         max_cell_voltage=round(vmax / 1000.0, 3),
         min_cell_voltage=round(vmin / 1000.0, 3),
         max_cell_index=max_idx,
@@ -649,14 +653,6 @@ def jbd_parse_fault_record(payload: bytes) -> FaultRecord | None:
         fet_status=fet,
         cell_voltages=cells,
     )
-    # Optional tail: u8 group id, u8 RSOC, u16 BMS status, u16 cycles, u8.u8 sw version, ...
-    if len(payload) >= pos + 2:
-        rec.soc = payload[pos + 1]
-    if len(payload) >= pos + 6:
-        rec.cycles = struct.unpack(">H", payload[pos + 4 : pos + 6])[0]
-    if len(payload) >= pos + 8:
-        rec.software_version = f"{payload[pos + 6]}.{payload[pos + 7]}"
-    return rec
 
 
 def jbd_parse_cell_voltages(payload: bytes) -> list[float]:

@@ -284,49 +284,38 @@ def test_jbd_extended_protection_bits():
     assert s.active_protections == ["charge_mos_broken", "mos_overtemperature"]
 
 
-def _fault_record(ts=123456, prot=0x0001, warn=0x0001, fet=0x02, cells=(3643, 3436, 3436, 3436), tail=True):
-    body = bytes([0x01]) + ts.to_bytes(5, "big")
-    body += struct.pack(">HhHHHH", 1395, 698, 30930, 31400, prot, warn)
-    body += struct.pack(">HHHH", 2731 + 244, 2731 + 199, 2731 + 198, 2731 + 310)
-    body += struct.pack(">HH", max(cells), min(cells))
-    body += bytes([cells.index(max(cells)) + 1, cells.index(min(cells)) + 1, fet, 0, 0, len(cells)])
-    body += b"".join(struct.pack(">H", c) for c in cells)
-    if tail:
-        body += bytes([0, 99]) + struct.pack(">HH", 0, 3) + bytes([3, 5]) + struct.pack(">HH", 0, 0)
-    return body
+REAL_RECORD = bytes.fromhex(
+    "012c0006060243170a1740050000a77aa87a01000100580b560b00005d0b280d1e0d01040200"
+    "280d1f0d1f0d1e0d100e100e100e100e100e100e100e100e100e100e100e"
+)
 
 
-def test_jbd_fault_record_full():
-    rec = p.jbd_parse_fault_record(_fault_record())
+def test_jbd_record_real_frame_discover_314ah():
+    # 0x08 payload captured 2026-09-07 09:57 UTC with cell OVP latched.
+    rec = p.jbd_parse_fault_record(REAL_RECORD)
     assert rec is not None
-    assert rec.timestamp == 123456
-    assert rec.voltage == 13.95 and rec.current == 6.98
-    assert rec.remaining_capacity == 309.3 and rec.nominal_capacity == 314.0
+    assert rec.header == bytes.fromhex("012c0006060243170a17")
+    assert rec.sequence == 6
+    assert rec.voltage == 13.44 and rec.current == 0.0
+    assert rec.remaining_capacity == 313.99 and rec.nominal_capacity == 314.0
     assert rec.active_protections == ["cell_overvoltage"]
     assert rec.active_warnings == ["cell_high_voltage"]
-    assert rec.max_cell_temperature == 24.4 and rec.core_temperature == 31.0
-    assert rec.max_cell_voltage == 3.643 and rec.max_cell_index == 1
-    assert rec.min_cell_voltage == 3.436 and rec.min_cell_index == 2
+    assert rec.temperatures == [17.3, 17.1, None, 17.8]
+    assert rec.max_cell_voltage == 3.368 and rec.max_cell_index == 1
+    assert rec.min_cell_voltage == 3.358 and rec.min_cell_index == 4
     assert rec.charge_fet_on is False and rec.discharge_fet_on is True
-    assert rec.cell_voltages == [3.643, 3.436, 3.436, 3.436]
-    assert rec.soc == 99 and rec.cycles == 3 and rec.software_version == "3.5"
-    assert "cell overvoltage" in rec.summary() and "3.643" in rec.summary()
+    assert rec.cell_voltages == [3.368, 3.359, 3.359, 3.358]
+    assert "cell overvoltage" in rec.summary() and "3.368" in rec.summary()
 
 
-def test_jbd_fault_record_without_tail_and_too_short():
-    rec = p.jbd_parse_fault_record(_fault_record(tail=False))
-    assert rec is not None and rec.soc is None and rec.cycles is None
-    assert p.jbd_parse_fault_record(_fault_record()[:20]) is None
-
-
-def test_jbd_fault_record_key_and_no_flags_summary():
-    a = p.jbd_parse_fault_record(_fault_record(prot=0, warn=0))
-    b = p.jbd_parse_fault_record(_fault_record(prot=0, warn=0))
-    assert a.key == b.key
-    assert a.summary().startswith("no flags")
+def test_jbd_record_key_is_header_and_short_payload_rejected():
+    a = p.jbd_parse_fault_record(REAL_RECORD)
+    b = p.jbd_parse_fault_record(REAL_RECORD[:3] + bytes([5]) + REAL_RECORD[4:])
+    assert a.key != b.key and b.sequence == 5
+    assert p.jbd_parse_fault_record(REAL_RECORD[:30]) is None
 
 
 def test_jbd_parse_u32():
     assert p.jbd_parse_u32(bytes.fromhex("00000007")) == 7
-    assert p.jbd_parse_u32(bytes.fromhex("68bd1c40")) == 0x68BD1C40
+    assert p.jbd_parse_u32(bytes.fromhex("16442303")) == 373564163
     assert p.jbd_parse_u32(b"\x00\x01") is None
