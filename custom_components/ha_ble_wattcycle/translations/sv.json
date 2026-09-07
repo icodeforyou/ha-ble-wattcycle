@@ -99,7 +99,7 @@
         "name": "Senaste BMS-loggpost"
       },
       "bms_boot_time": {
-        "name": "BMS startad"
+        "name": "BMS senast omstartad"
       }
     },
     "binary_sensor": {

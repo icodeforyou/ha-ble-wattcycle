@@ -40,7 +40,7 @@ Rekommenderad ordning (minst→mest riskabelt):
 
 Dokumentera varje verifierat skrivkommando (DP, byte-layout, effekt) allteftersom.
 
-## Fas D — BMS-omstart (0x0E), första verkliga skrivkommandot
+## Fas D — BMS-omstart (0x0E) — GENOMFÖRD 2026-09-07 12:52 (på distans, landström): omstart bekräftad via klockan, OVP släppte, ingen ack
 
 Förutsättningar: landström inkopplad (laddaren matar då lasten medan BMS:en startar om; utan
 landström tappar allt 12 V — inklusive BLE-proxyn — strömmen en kort stund). Telefonappen stängd.

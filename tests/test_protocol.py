@@ -324,16 +324,22 @@ def test_jbd_record_info_and_clock_real_frames():
     # 0x06 reply: dd 06 00 06 | 15 01 00 04 02 01 | ff dd 77 — BCD ss mm hh dd MM yy
     clock = p.jbd_parse_clock(bytes.fromhex("150100040201"))
     assert clock.hex == "15 01 00 04 02 01"
-    assert clock.bms_datetime == datetime(2001, 2, 4, 0, 1, 15)
-    assert clock.uptime == timedelta(days=34, minutes=1, seconds=15)
+    assert clock.bms_datetime == datetime(2000, 2, 4, 0, 1, 15)  # yy ignored
+    assert clock.days_running == 34
+    assert clock.time_since_restart == timedelta(minutes=1, seconds=15)
     later = p.jbd_parse_clock(bytes.fromhex("351600040201"))
-    assert later.bms_datetime - clock.bms_datetime == timedelta(minutes=15, seconds=20)
+    assert later.elapsed - clock.elapsed == timedelta(minutes=15, seconds=20)
+    # After the 12:52 restart: time of day reset, day counter kept, yy flipped 01 -> 00.
+    rebooted = p.jbd_parse_clock(bytes.fromhex("090400040200"))
+    assert rebooted.days_running == 34
+    assert rebooted.time_since_restart == timedelta(minutes=4, seconds=9)
+    assert rebooted.elapsed < later.elapsed  # this is how a restart is detected
     assert p.jbd_parse_clock(b"") is None
-    assert p.jbd_parse_clock(bytes.fromhex("ffffffffffff")).bms_datetime is None
+    assert p.jbd_parse_clock(bytes.fromhex("ffffffffffff")).fields is None
 
 
 def test_jbd_record_header_datetime():
     rec = p.jbd_parse_fault_record(REAL_RECORD)  # header 01 2c 00 06 06 02 43 17 0a 17
-    assert rec.bms_datetime(2001) == datetime(2001, 2, 3, 23, 10, 23)
+    assert rec.bms_datetime(2000) == datetime(2000, 2, 3, 23, 10, 23)
     rolled = p.jbd_parse_fault_record(bytes.fromhex("012c0000060244000012") + REAL_RECORD[10:])
-    assert rolled.bms_datetime(2001) == datetime(2001, 2, 4, 0, 0, 18)
+    assert rolled.bms_datetime(2000) == datetime(2000, 2, 4, 0, 0, 18)

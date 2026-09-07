@@ -63,9 +63,15 @@ async def async_get_config_entry_diagnostics(
                 if connection.bms_clock and connection.bms_clock.bms_datetime
                 else None
             ),
-            "bms_boot_time": (
-                connection.bms_boot_time.isoformat() if connection.bms_boot_time else None
+            "bms_last_restart": (
+                connection.bms_last_restart.isoformat() if connection.bms_last_restart else None
             ),
+            "bms_first_power_on_estimate": (
+                connection.bms_first_power_estimate.isoformat()
+                if connection.bms_first_power_estimate
+                else None
+            ),
+            "bms_days_in_service": connection.bms_clock.days_running if connection.bms_clock else None,
             "bms_restarts_seen": connection.bms_restart_count,
             "bms_clock_read_at": (
                 connection.bms_clock_read_at.isoformat() if connection.bms_clock_read_at else None

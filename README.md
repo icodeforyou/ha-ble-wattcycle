@@ -29,10 +29,12 @@ JBD/Xiaoxiang-based packs) over Bluetooth Low Energy. Works through **ESPHome Bl
   on with zero current is the charger finishing.
 - Self-heating status and BMS warnings (advisory flags, with the list as an attribute).
 - **Restart BMS** button and `restart_bms` service — the app's "Reboot system", for clearing a
-  latched protection such as cell overvoltage after a full charge (JBD packs; **unverified
-  against hardware until the first field test**, see docs/TESTPLAN.md phase D).
-- **BMS clock and snapshot log**: the BMS clock (JBD 0x06, BCD, never set → counts from its
-  epoch) gives a *BMS started* sensor and restart detection; the BMS keeps 300 five-minute
+  latched protection such as cell overvoltage after a full charge (JBD packs). Verified on a
+  DISCOVER 314Ah: the BMS reboots at once and clears the latch, but sends no acknowledgement,
+  so the button reports a timeout — check *BMS last restart* instead.
+- **BMS clock and snapshot log**: the BMS "clock" (JBD 0x06, BCD) is a day counter plus time
+  since the last restart, which gives a *BMS last restart* sensor (with days in service and an
+  approximate first power-on as attributes); the BMS keeps 300 five-minute
   snapshots (0x07 index, 0x08 records, little-endian — unlike the app's parser), read one per
   poll and exposed as *BMS log index*, *Last BMS log record* (record as attributes) and in
   diagnostics.

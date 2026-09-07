@@ -99,7 +99,7 @@
         "name": "Last BMS log record"
       },
       "bms_boot_time": {
-        "name": "BMS started"
+        "name": "BMS last restart"
       }
     },
     "binary_sensor": {

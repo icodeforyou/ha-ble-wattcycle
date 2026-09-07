@@ -122,6 +122,7 @@ class WattCycleConnection:
         self.bms_clock: JbdClock | None = None
         self.bms_clock_read_at: datetime | None = None
         self.bms_restart_count = 0  # clock went backwards since HA started
+        self.bms_last_restart: datetime | None = None  # wall-clock, set when a restart is seen
         self._event_log_supported: bool | None = None
 
     @property
@@ -551,16 +552,19 @@ class WattCycleConnection:
         self.record_info = result
         clock = await self._request(jbd_build_read_frame(JBD_CMD_SYSTEM_TIME))
         if isinstance(clock, JbdClock):
-            prev = self.bms_clock.uptime if self.bms_clock else None
-            now_up = clock.uptime
-            if prev is not None and now_up is not None and now_up < prev:
+            read_at = datetime.now(timezone.utc)
+            prev = self.bms_clock.elapsed if self.bms_clock else None
+            now_el = clock.elapsed
+            if prev is not None and now_el is not None and now_el < prev:
                 self.bms_restart_count += 1
+                since = clock.time_since_restart or timedelta(0)
+                self.bms_last_restart = (read_at - since).replace(microsecond=0)
                 _LOGGER.warning(
-                    "%s BMS clock went from %s back to %s: the BMS restarted",
-                    self._address, prev, now_up,
+                    "%s BMS restarted at about %s (clock %s -> %s)",
+                    self._address, self.bms_last_restart.isoformat(), prev, now_el,
                 )
             self.bms_clock = clock
-            self.bms_clock_read_at = datetime.now(timezone.utc)
+            self.bms_clock_read_at = read_at
         seen = {rec.key for rec in self.events}
         for _ in range(EVENT_RECORDS_PER_POLL):
             rec = await self._request(jbd_build_read_frame(JBD_CMD_RECORD_CURRENT))
@@ -574,15 +578,18 @@ class WattCycleConnection:
         del self.events[MAX_EVENT_RECORDS:]
 
     @property
-    def bms_boot_time(self) -> datetime | None:
-        """When the BMS clock started, in our wall-clock time (assumes JBD_CLOCK_EPOCH)."""
+    def bms_first_power_estimate(self) -> datetime | None:
+        """Approximate first power-on: read time minus the day counter and time of day.
+
+        Only exact if the BMS never restarted (a restart resets the time of day but not the
+        day counter), so treat as ±1 day. Rounded to the minute.
+        """
         if self.bms_clock is None or self.bms_clock_read_at is None:
             return None
-        up = self.bms_clock.uptime
-        if up is None:
+        el = self.bms_clock.elapsed
+        if el is None:
             return None
-        boot = self.bms_clock_read_at - up
-        return boot.replace(second=0, microsecond=0)  # stable to the minute
+        return (self.bms_clock_read_at - el).replace(second=0, microsecond=0)
 
     def event_time(self, record: FaultRecord) -> datetime | None:
         """Wall-clock time of a record: read time minus its age on the BMS clock."""
@@ -591,11 +598,11 @@ class WattCycleConnection:
         clock_dt = self.bms_clock.bms_datetime
         if clock_dt is None:
             return None
-        rec_dt = record.bms_datetime(clock_dt.year)
-        if rec_dt is None:
+        rec_dt = record.bms_datetime(2000)
+        if rec_dt is None or rec_dt > clock_dt:
+            # Records carry the same day counter + time of day; a record "in the future"
+            # predates a BMS restart (time of day reset) and cannot be placed reliably.
             return None
-        if rec_dt > clock_dt:  # record from before a year rollover, or garbage
-            rec_dt = rec_dt.replace(year=clock_dt.year - 1)
         return self.bms_clock_read_at - (clock_dt - rec_dt)
 
     async def _poll_jbd(self) -> BatteryState:

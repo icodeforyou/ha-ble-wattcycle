@@ -401,11 +401,11 @@ i appen.
 
 | cmd  | Riktning | Data | Betydelse | Status i integrationen |
 |------|----------|------|-----------|------------------------|
-| 0x06 | läs | → 6 byte **BCD `ss mm hh dd MM yy`** (`15 01 00 04 02 01` = 2001-02-04 00:01:15; 15 min 23 s senare `35 16 00 04 02 01` = 00:16:35 → går i realtid, **VET**) | klockan är aldrig ställd → räknar från epok 2001-01-01 (TROR) = uptime; appen läser u32 BE Unix — fel | läses varje poll → sensor *BMS startad*, omstart = klockan går bakåt (v0.3.3) |
+| 0x06 | läs | → 6 byte **BCD `ss mm hh dd MM yy`** — INTE en kalenderklocka (**VET** 2026-09-07): hh:mm:ss går i realtid och nollställs vid BMS-omstart; dd/MM är en ihållande dygnsräknare (rullar vid 23:59→00:00, överlever omstart; 04/02 = dag 34 sedan första inkoppling); yy gick 01→00 vid omstart — betydelse okänd, ignoreras | appen läser u32 BE Unix — fel | läses varje poll → *BMS senast omstartad* (sätts när klockan går bakåt = lästid − hh:mm:ss), attribut dygn i drift + uppskattad första inkoppling (v0.3.5) |
 | 0x07 | läs | → 2× u16 BE (`00 e2 01 2c` = 226, 300) | TROR: index/skrivna poster och ringstorlek; 300 (`01 2c`) inleder även varje 0x08-post. Nollställer 0x08-cursorn (byte 3 börjar om på 2) — observerat | läses varje poll (v0.3.2) |
 | 0x08 | läs | → post (68 B, LE) | "aktuell post"; appen: nollställ → 0x07 → 0x08 × antal | max 3/poll, experimentellt (v0.3.0); ~5 s per svar observerat |
 | 0x0A | skriv | `18 81` | **återställ fabriksinställningar — skicka ALDRIG** | avsiktligt ej exponerat |
-| 0x0E | skriv | `81 18` | mjuk omstart av BMS ("Reboot system") → `DD 5A 0E 02 81 18 FF 57 77` | knapp + tjänst `restart_bms` (v0.3.0), **overifierat mot hårdvara** |
+| 0x0E | skriv | `81 18` | mjuk omstart av BMS ("Reboot system") → `DD 5A 0E 02 81 18 FF 57 77` | **VERIFIERAT 2026-09-07 12:52:** BMS:en startade om (klockans hh:mm:ss → 0), cell-OVP-latchen släppte, ladd-FET på. **Ingen ack sågs** inom 8 s — BMS:en startar om direkt; knappen rapporterar därför timeout trots lyckad omstart (v0.3.4+ förklarar detta) |
 | 0xFB | skriv | `<mål> <värde>` | MOS-styrning: mål 1 = ladd, 0 = urladd; värde 1 = AV, 0 = PÅ | ej exponerat (urladd-av kopplar bort bodelen) |
 | 0xFD | skriv | `<1 på/2 av> <h> <min> <start °C> <stopp °C>` | värmestyrning | ej exponerat |
 
@@ -434,7 +434,7 @@ Integrationen (v0.3.3) läser 0x07 + 0x06 varje poll och 1 post per poll (0x08),
 diagnostiken. Posternas tid = lästid − (BMS-klocka − posttid). Loggboks-events avstängda (snapshots = brus). Omstart
 detekteras när klockans uptime minskar (varning i loggen, räknare som attribut på *BMS startad*).
 
-Kvar att kartlägga: BMS-status-bitordning, klockepoken (2001 antagen), huvudets byte 4 (0x06), vilka poster 0x07 ställer cursorn på (sågs: de 3 resp. 7 senaste), 62 °C-anomalin.
+Kvar att kartlägga: BMS-status-bitordning, klockans yy-byte (01→00 vid omstart), huvudets byte 4 (0x06), vilka poster 0x07 ställer cursorn på (sågs: de 3 resp. 7 senaste), 62 °C-anomalin.
 
 ### Ursprungliga valideringsmål (datablad)
 

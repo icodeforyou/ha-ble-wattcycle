@@ -332,11 +332,12 @@ class WattCycleLastEventSensor(WattCycleEntity, SensorEntity):
 
 
 class WattCycleBootTimeSensor(WattCycleEntity, SensorEntity):
-    """When the BMS (re)started, derived from its never-set clock (JBD 0x06).
+    """When the BMS last restarted, as seen by Home Assistant.
 
-    The clock is BCD ss mm hh dd MM yy and counts from 2001-01-01 (assumed), so boot time is
-    read time minus that uptime. Rounded to the minute so the state does not churn every poll.
-    A jump forward means the BMS restarted; the restart count since HA start is an attribute.
+    The BMS clock (JBD 0x06) resets its time of day on a restart but keeps a day counter, so a
+    restart shows as the clock going backwards. The state is set from that moment on (read
+    time minus the new time of day); before any restart has been observed it is unknown.
+    Attributes carry the raw clock, days in service and an approximate first power-on.
     """
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
@@ -349,17 +350,21 @@ class WattCycleBootTimeSensor(WattCycleEntity, SensorEntity):
 
     @property
     def native_value(self):
-        return self.coordinator.connection.bms_boot_time
+        return self.coordinator.connection.bms_last_restart
 
     @property
     def extra_state_attributes(self) -> dict | None:
         conn = self.coordinator.connection
-        if conn.bms_clock is None:
+        clock = conn.bms_clock
+        if clock is None:
             return None
-        up = conn.bms_clock.uptime
+        since = clock.time_since_restart
+        first = conn.bms_first_power_estimate
         return {
-            "bms_clock": conn.bms_clock.bms_datetime.isoformat() if conn.bms_clock.bms_datetime else None,
-            "bms_clock_raw": conn.bms_clock.hex,
-            "uptime_seconds": int(up.total_seconds()) if up else None,
+            "bms_clock_raw": clock.hex,
+            "bms_clock": clock.bms_datetime.isoformat() if clock.bms_datetime else None,
+            "days_in_service": clock.days_running,
+            "time_since_restart_seconds": int(since.total_seconds()) if since else None,
+            "first_power_on_estimate": first.isoformat() if first else None,
             "restarts_seen": conn.bms_restart_count,
         }

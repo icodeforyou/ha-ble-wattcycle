@@ -557,21 +557,20 @@ def jbd_parse_record_info(payload: bytes) -> JbdRecordInfo | None:
     return JbdRecordInfo(index, capacity)
 
 
-# The BMS clock is never set on this pack, so it counts from its own epoch. Two reads 15 min
-# 23 s apart advanced 15 min 20 s and read 2001-02-04 00:xx after 34 days of service, so the
-# epoch is taken as 2001-01-01 00:00:00 (unverified — 2000 would imply >1 year of uptime for a
-# battery manufactured 2026-05).
-JBD_CLOCK_EPOCH = datetime(2001, 1, 1)
-
-
 def _bcd(byte: int) -> int:
     return (byte >> 4) * 10 + (byte & 0x0F)
 
 
 @dataclass(frozen=True)
 class JbdClock:
-    """Reply to 0x06: six BCD bytes `ss mm hh dd MM yy` (verified 2026-09-07 against two
-    reads of known spacing). The app reads the first four bytes as a Unix u32 — wrong here.
+    """Reply to 0x06: six BCD bytes `ss mm hh dd MM yy` — but not a calendar clock.
+
+    Verified 2026-09-07 on a DISCOVER 314Ah: the time-of-day ticks in real time and the day
+    rolls over at 23:59→00:00, yet a BMS restart reset hh:mm:ss to 00:00:00 while keeping
+    dd/MM (04/02 before and after) and flipped yy from 01 to 00. So dd/MM is a persistent
+    day counter since first power-on (day 1 of month 1 = day 0), hh:mm:ss counts from the
+    last restart (and keeps running across the day rollover), and yy is not a year — its
+    meaning is unknown and it is ignored.
     """
 
     raw: bytes
@@ -581,23 +580,48 @@ class JbdClock:
         return self.raw.hex(" ")
 
     @property
-    def bms_datetime(self) -> datetime | None:
-        """The BMS's own wall clock (its epoch, not ours)."""
+    def fields(self) -> tuple[int, int, int, int, int, int] | None:
+        """(ss, mm, hh, dd, MM, yy) decoded from BCD, or None if malformed."""
         if len(self.raw) < 6:
             return None
+        vals = tuple(_bcd(b) for b in self.raw[:6])
+        ss, mm, hh, dd, mo, _yy = vals
+        if ss > 59 or mm > 59 or hh > 23 or not 1 <= dd <= 31 or not 1 <= mo <= 12:
+            return None
+        return vals  # type: ignore[return-value]
+
+    @property
+    def bms_datetime(self) -> datetime | None:
+        """The raw fields laid out as a datetime in year 2000, for display only."""
+        f = self.fields
+        if f is None:
+            return None
+        ss, mm, hh, dd, mo, _ = f
         try:
-            ss, mm, hh, dd, mo, yy = (_bcd(b) for b in self.raw[:6])
-            return datetime(2000 + yy, mo, dd, hh, mm, ss)
+            return datetime(2000, mo, dd, hh, mm, ss)
         except ValueError:
             return None
 
     @property
-    def uptime(self) -> timedelta | None:
-        """Time since the BMS clock started, assuming JBD_CLOCK_EPOCH."""
+    def days_running(self) -> int | None:
+        """Days since first power-on, from the persistent dd/MM counter (2000 calendar)."""
         dt = self.bms_datetime
-        if dt is None:
+        return None if dt is None else (dt - datetime(2000, 1, 1)).days
+
+    @property
+    def time_since_restart(self) -> timedelta | None:
+        """hh:mm:ss — time since the last BMS restart, valid until the first day rollover."""
+        f = self.fields
+        if f is None:
             return None
-        return dt - JBD_CLOCK_EPOCH
+        ss, mm, hh, *_ = f
+        return timedelta(hours=hh, minutes=mm, seconds=ss)
+
+    @property
+    def elapsed(self) -> timedelta | None:
+        """Day counter plus time of day; decreases only when the BMS restarts."""
+        dt = self.bms_datetime
+        return None if dt is None else dt - datetime(2000, 1, 1)
 
 
 def jbd_parse_clock(payload: bytes) -> JbdClock | None:
