@@ -30,8 +30,8 @@ JBD/Xiaoxiang-based packs) over Bluetooth Low Energy. Works through **ESPHome Bl
 - Self-heating status and BMS warnings (advisory flags, with the list as an attribute).
 - **Restart BMS** button and `restart_bms` service — the app's "Reboot system", for clearing a
   latched protection such as cell overvoltage after a full charge (JBD packs). Verified on a
-  DISCOVER 314Ah: the BMS reboots at once and clears the latch, but sends no acknowledgement,
-  so the button reports a timeout — check *BMS last restart* instead.
+  DISCOVER 314Ah: the BMS reboots at once and clears the latch without acknowledging, so the
+  button confirms success through the BMS clock (*BMS last restart*) rather than an ack.
 - **BMS clock and snapshot log**: the BMS "clock" (JBD 0x06, BCD) is a day counter plus time
   since the last restart, which gives a *BMS last restart* sensor (with days in service and an
   approximate first power-on as attributes); the BMS keeps 300 five-minute

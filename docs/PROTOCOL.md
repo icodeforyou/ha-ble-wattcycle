@@ -405,7 +405,7 @@ i appen.
 | 0x07 | läs | → 2× u16 BE (`00 e2 01 2c` = 226, 300) | TROR: index/skrivna poster och ringstorlek; 300 (`01 2c`) inleder även varje 0x08-post. Nollställer 0x08-cursorn (byte 3 börjar om på 2) — observerat | läses varje poll (v0.3.2) |
 | 0x08 | läs | → post (68 B, LE) | "aktuell post"; appen: nollställ → 0x07 → 0x08 × antal | max 3/poll, experimentellt (v0.3.0); ~5 s per svar observerat |
 | 0x0A | skriv | `18 81` | **återställ fabriksinställningar — skicka ALDRIG** | avsiktligt ej exponerat |
-| 0x0E | skriv | `81 18` | mjuk omstart av BMS ("Reboot system") → `DD 5A 0E 02 81 18 FF 57 77` | **VERIFIERAT 2026-09-07 12:52:** BMS:en startade om (klockans hh:mm:ss → 0), cell-OVP-latchen släppte, ladd-FET på. **Ingen ack sågs** inom 8 s — BMS:en startar om direkt; knappen rapporterar därför timeout trots lyckad omstart (v0.3.4+ förklarar detta) |
+| 0x0E | skriv | `81 18` | mjuk omstart av BMS ("Reboot system") → `DD 5A 0E 02 81 18 FF 57 77` | **VERIFIERAT 2026-09-07 12:52:** BMS:en startade om (klockans hh:mm:ss → 0), cell-OVP-latchen släppte, ladd-FET på. **Ingen ack sågs** inom 8 s — BMS:en startar om direkt; från v0.3.8 bekräftar knappen omstarten via klockan (hh:mm:ss nollställd) och rapporterar fel bara om klockan inte nollställts |
 | 0xFB | skriv | `<mål> <värde>` | MOS-styrning: mål 1 = ladd, 0 = urladd; värde 1 = AV, 0 = PÅ | ej exponerat (urladd-av kopplar bort bodelen) |
 | 0xFD | skriv | `<1 på/2 av> <h> <min> <start °C> <stopp °C>` | värmestyrning | ej exponerat |
 

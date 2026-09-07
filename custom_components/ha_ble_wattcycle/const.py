@@ -37,6 +37,7 @@ SERVICE_RESTART_BMS: Final = "restart_bms"
 ATTR_DATA: Final = "data"
 # Seconds to wait after a BMS restart ack before polling again.
 RESTART_REFRESH_DELAY: Final = 8
+RESTART_CONFIRM_ATTEMPTS: Final = 3  # polls to wait for the BMS to come back after a restart
 
 # BMS event log (JBD 0x07/0x08)
 MAX_EVENT_RECORDS: Final = 50  # records kept in memory, newest first

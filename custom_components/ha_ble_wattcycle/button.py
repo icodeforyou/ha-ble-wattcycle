@@ -9,6 +9,7 @@ the leisure battery.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from bleak.exc import BleakError
@@ -22,10 +23,9 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_call_later
 
 from . import WattCycleConfigEntry
-from .const import RESTART_REFRESH_DELAY
+from .const import RESTART_CONFIRM_ATTEMPTS, RESTART_REFRESH_DELAY
 from .coordinator import WattCycleCoordinator
 from .entity import WattCycleEntity
 
@@ -64,25 +64,44 @@ class WattCycleRestartButton(WattCycleEntity, ButtonEntity):
 
 
 async def async_restart_bms(coordinator: WattCycleCoordinator) -> None:
-    """Send the restart, surface the BMS's answer, and re-poll once it is back."""
+    """Send the restart and confirm it through the BMS clock.
+
+    The DISCOVER 314Ah reboots immediately without acknowledging, so a timeout on the ack is
+    the normal outcome there. After a timeout the pack is polled again once it is back; if its
+    clock shows the time of day reset (restart detected by the coordinator), the restart
+    succeeded. Only if the clock kept running is the command reported as ignored.
+    """
+    conn = coordinator.connection
+    restarts_before = conn.bms_restart_count
+    timed_out = False
     try:
-        ack = await coordinator.connection.async_restart_bms()
-    except TimeoutError as err:
-        # The frame was written but no ack came back within the command timeout. Either the
-        # BMS rebooted at once without acknowledging, or it ignored the command. The next poll
-        # tells which: a BMS clock that restarted from 2001-01-01 means it rebooted.
-        raise HomeAssistantError(
-            "BMS restart: frame sent but no acknowledgement within the timeout. Check the "
-            "'BMS started' sensor after the next poll — if it jumped to now, the BMS rebooted "
-            "without acking; if not, the command was ignored."
-        ) from err
+        ack = await conn.async_restart_bms()
+    except TimeoutError:
+        timed_out = True
     except (ValueError, OSError, BleakError) as err:
         raise HomeAssistantError(f"BMS restart failed: {type(err).__name__}: {err}") from err
-    if not ack.ok:
-        raise HomeAssistantError(f"BMS refused the restart: {ack.error}")
-    _LOGGER.info("BMS acknowledged restart; re-polling in %ss", RESTART_REFRESH_DELAY)
+    else:
+        if not ack.ok:
+            raise HomeAssistantError(f"BMS refused the restart: {ack.error}")
+        _LOGGER.info("BMS acknowledged restart")
 
-    async def _refresh(_now) -> None:
-        await coordinator.async_request_refresh()
+    # Give the BMS time to come back, then let the coordinator read the clock.
+    await asyncio.sleep(RESTART_REFRESH_DELAY)
+    for _ in range(RESTART_CONFIRM_ATTEMPTS):
+        await coordinator.async_refresh()
+        if conn.bms_restart_count > restarts_before:
+            _LOGGER.info(
+                "BMS restart confirmed by its clock at %s", conn.bms_last_restart
+            )
+            return
+        if not coordinator.last_update_success:
+            await asyncio.sleep(RESTART_REFRESH_DELAY)
+            continue
+        break
 
-    async_call_later(coordinator.hass, RESTART_REFRESH_DELAY, _refresh)
+    if timed_out:
+        raise HomeAssistantError(
+            "BMS restart: the frame was sent but the BMS neither acknowledged it nor reset its "
+            "clock — the command appears to have been ignored."
+        )
+    _LOGGER.warning("BMS acknowledged the restart but its clock did not reset; check manually")
