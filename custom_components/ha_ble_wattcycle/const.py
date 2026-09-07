@@ -13,6 +13,9 @@ CONF_USE_HILINK_AUTH: Final = "use_hilink_auth"
 # Wire protocol confirmed by probing ("watt"/"jbd"/"bmc"); persisted after discovery
 # so restarts skip the probe ladder.
 CONF_PROTOCOL_MODE: Final = "protocol_mode"
+# Last BMS restart seen (ISO timestamp) and how many were seen — persisted across reloads.
+CONF_LAST_RESTART: Final = "bms_last_restart"
+CONF_RESTART_COUNT: Final = "bms_restart_count"
 
 # Options
 CONF_SCAN_INTERVAL: Final = "scan_interval"

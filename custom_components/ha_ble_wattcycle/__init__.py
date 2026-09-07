@@ -76,6 +76,14 @@ async def async_unload_entry(hass: HomeAssistant, entry: WattCycleConfigEntry) -
 
 
 async def _async_reload_entry(hass: HomeAssistant, entry: WattCycleConfigEntry) -> None:
+    """Reload when the user changes options.
+
+    The coordinator also writes bookkeeping into entry.data (protocol mode, last BMS restart);
+    those must not trigger a reload, so compare options with what the running coordinator saw.
+    """
+    coordinator: WattCycleCoordinator | None = getattr(entry, "runtime_data", None)
+    if coordinator is not None and coordinator.options_snapshot == dict(entry.options):
+        return
     await hass.config_entries.async_reload(entry.entry_id)
 
 

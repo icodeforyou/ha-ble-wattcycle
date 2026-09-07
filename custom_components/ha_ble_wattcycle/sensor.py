@@ -336,8 +336,9 @@ class WattCycleBootTimeSensor(WattCycleEntity, SensorEntity):
 
     The BMS clock (JBD 0x06) resets its time of day on a restart but keeps a day counter, so a
     restart shows as the clock going backwards. The state is set from that moment on (read
-    time minus the new time of day); before any restart has been observed it is unknown.
-    Attributes carry the raw clock, days in service and an approximate first power-on.
+    time minus the new time of day) and persisted on the config entry, so reloads and HA
+    restarts keep it; before any restart has ever been observed it is unknown. Attributes
+    carry the raw clock, days in service and an approximate first power-on.
     """
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP

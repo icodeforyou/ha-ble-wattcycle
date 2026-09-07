@@ -21,7 +21,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import (
     COMMAND_TIMEOUT,
+    CONF_LAST_RESTART,
     CONF_PROTOCOL_MODE,
+    CONF_RESTART_COUNT,
     CONNECT_TIMEOUT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -686,7 +688,16 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
         )
         self.entry = entry
         self.connection = connection
+        self.options_snapshot = dict(entry.options)
         self._seen_events: set[tuple[int, int, int]] | None = None
+        # Seed restart history from the entry so a reload does not forget it.
+        stored = entry.data.get(CONF_LAST_RESTART)
+        if stored:
+            try:
+                connection.bms_last_restart = datetime.fromisoformat(stored)
+            except ValueError:
+                pass
+        connection.bms_restart_count = int(entry.data.get(CONF_RESTART_COUNT, 0))
 
     async def _async_update_data(self) -> BatteryState:
         try:
@@ -695,6 +706,7 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
             async with asyncio.timeout(POLL_TIMEOUT):
                 state = await self.connection.async_poll()
             self._async_persist_protocol_mode()
+            self._async_persist_restart()
             return state
         except (BleakError, asyncio.TimeoutError, EOFError) as err:
             # Drop the connection so the next cycle re-establishes cleanly.
@@ -710,6 +722,23 @@ class WattCycleCoordinator(DataUpdateCoordinator[BatteryState]):
         (see git history / logbook.py) once the record semantics and timestamp are verified.
         """
         return
+
+    def _async_persist_restart(self) -> None:
+        """Store the last seen BMS restart on the entry so reloads keep it."""
+        last = self.connection.bms_last_restart
+        if last is None:
+            return
+        iso = last.isoformat()
+        if self.entry.data.get(CONF_LAST_RESTART) == iso:
+            return
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            data={
+                **self.entry.data,
+                CONF_LAST_RESTART: iso,
+                CONF_RESTART_COUNT: self.connection.bms_restart_count,
+            },
+        )
 
     def _async_persist_protocol_mode(self) -> None:
         """Store the probed wire protocol on the entry so restarts skip the ladder."""
